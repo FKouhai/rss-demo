@@ -1,0 +1,36 @@
+schema = 3
+
+[mod]
+  [mod."github.com/PuerkitoBio/goquery"]
+    version = "v1.8.0"
+    hash = "sha256-I3QaPWATvBOL/F26fIiYWKS13yBUYo+9o3tcsGIu8tY="
+  [mod."github.com/andybalholm/cascadia"]
+    version = "v1.3.1"
+    hash = "sha256-M0u22DXSeXUaYtl1KoW1qWL46niFpycFkraCEQ/luYA="
+  [mod."github.com/json-iterator/go"]
+    version = "v1.1.12"
+    hash = "sha256-To8A0h+lbfZ/6zM+2PpRpY3+L6725OPC66lffq6fUoM="
+  [mod."github.com/mmcdole/gofeed"]
+    version = "v1.3.0"
+    hash = "sha256-GHpqGZvNg+3RSIkVKXrWg6/e8dJD8Y5v2Sx6MzmRlQ0="
+  [mod."github.com/mmcdole/goxpp"]
+    version = "v1.1.1-0.20240225020742-a0c311522b23"
+    hash = "sha256-2pGg+LxHHQn2lwQBvc7EtrpMwZbZF7qepglzhS3TfW4="
+  [mod."github.com/modern-go/concurrent"]
+    version = "v0.0.0-20180306012644-bacd9c7ef1dd"
+    hash = "sha256-OTySieAgPWR4oJnlohaFTeK1tRaVp/b0d1rYY8xKMzo="
+  [mod."github.com/modern-go/reflect2"]
+    version = "v1.0.2"
+    hash = "sha256-+W9EIW7okXIXjWEgOaMh58eLvBZ7OshW2EhaIpNLSBU="
+  [mod."go.uber.org/multierr"]
+    version = "v1.10.0"
+    hash = "sha256-GepuppwpqpOGSNKi6GtGoO01TFxUQWfKZmE0B3M/HQA="
+  [mod."go.uber.org/zap"]
+    version = "v1.27.0"
+    hash = "sha256-8655KDrulc4Das3VRduO9MjCn8ZYD5WkULjCvruaYsU="
+  [mod."golang.org/x/net"]
+    version = "v0.4.0"
+    hash = "sha256-7IwGZh/xg4mQz88cJio2Ov5d3jGRXKj1itlAja/EAbQ="
+  [mod."golang.org/x/text"]
+    version = "v0.5.0"
+    hash = "sha256-ztH+xQyM/clOcQl+y/UEPcfNKbc3xApMbEPDDZ9up0o="
