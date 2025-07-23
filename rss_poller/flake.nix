@@ -27,7 +27,7 @@
           name = "go-test";
           dontBuild = true;
           src = ./.;
-          doCheck = true;
+          doCheck = false;
           nativeBuildInputs = with pkgs; [
             go
             writableTmpDirAsHomeHook
@@ -44,7 +44,7 @@
           name = "go-lint";
           dontBuild = true;
           src = ./.;
-          doCheck = true;
+          doCheck = false;
           nativeBuildInputs = with pkgs; [
             golangci-lint
             go

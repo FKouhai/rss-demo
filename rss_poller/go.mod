@@ -1,4 +1,4 @@
-module github.com/FKouhai/rss-microservices
+module github.com/FKouhai/rss-poller
 
 go 1.24
 
