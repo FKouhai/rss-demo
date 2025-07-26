@@ -64,16 +64,25 @@ func HealthzHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// RSSHandler is the route that exposes the rss feeds that has been polled
+// RSSHandler is the route that exposes the rss feeds that have been polled
 func RSSHandler(w http.ResponseWriter, r *http.Request) {
+	// TODO format as a JSON blob the response contents from the RSS feeds.
+	// TODO mock the /rss endpoint content and test against it
+	// The json blob should contain the title,description,content and source url of where to find the actual content
+	// With that endpoint exposed the notification microservice should be contacted to trigger a notification to the end user destination source  (telegram,discord)
+	// auth between services should be based on mtls
+	// Add a way for user auth and per user rss feeds
+	// Auth should be added to /config and /rss
 	log.Info("connection to /rss established")
 	feeds, err := ParseRSS(cfg.RSSFeeds)
 	if err != nil {
 		log.Debug(err.Error())
+		w.WriteHeader(http.StatusInternalServerError)
+		return
 	}
 	for _, v := range feeds.Items {
-		w.Write([]byte(v.Title))
-		w.Write([]byte(v.Description))
+		w.Write([]byte(v.Title + "\n"))
+		w.Write([]byte(v.Description + "\n"))
 		w.Write([]byte(v.Content))
 	}
 }
