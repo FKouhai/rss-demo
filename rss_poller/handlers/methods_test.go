@@ -9,6 +9,27 @@ import (
 	"testing"
 )
 
+const mockRSSFeedContent = `
+<rss version="2.0">
+<channel>
+    <title>Test RSS Feed</title>
+    <description>This is a test RSS feed.</description>
+    <item>
+        <title>Test Item 1</title>
+        <description>Description for Test Item 1</description>
+        <content:encoded><![CDATA[Content for Test Item 1]]></content:encoded>
+        <link>http://example.com/item1</link>
+    </item>
+    <item>
+        <title>Test Item 2</title>
+        <description>Description for Test Item 2</description>
+        <content:encoded><![CDATA[Content for Test Item 2]]></content:encoded>
+        <link>http://example.com/item2</link>
+    </item>
+</channel>
+</rss>
+`
+
 func TestMain(t *testing.T) {
 	req, err := http.NewRequest("GET", "/", nil)
 	if err != nil {
@@ -84,4 +105,66 @@ func TestHealth(t *testing.T) {
 	if !reflect.DeepEqual(want, response) {
 		t.Errorf("Expected %v, got: %v", want, response)
 	}
+}
+
+func startMockRSSFeedServer() *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "application/rss+xml")
+		w.Write([]byte(mockRSSFeedContent))
+	}))
+}
+
+func TestParseRSS(t *testing.T) {
+	mockServer := startMockRSSFeedServer()
+	defer mockServer.Close()
+	feed, err := ParseRSS(mockServer.URL)
+	if err != nil {
+		t.Error(err)
+	}
+	if feed.Title != "Test RSS Feed" {
+		t.Error("title feed is different than expected")
+	}
+	if feed.Description != "This is a test RSS feed." {
+		t.Error("expected different description")
+	}
+	if len(feed.Items) != 2 {
+		t.Error("Expected 2 ites in the feed")
+	}
+}
+
+func TestRSSHandler(t *testing.T) {
+	mockServer := startMockRSSFeedServer()
+	defer mockServer.Close()
+	cfg.RSSFeeds = mockServer.URL
+	req, err := http.NewRequest("GET", "/rss", nil)
+	if err != nil {
+		t.Error(err)
+	}
+	requestRecorder := httptest.NewRecorder()
+	handler := http.HandlerFunc(RSSHandler)
+	handler.ServeHTTP(requestRecorder, req)
+	if requestRecorder.Code != http.StatusOK {
+		t.Errorf("expected %v, got: %v", http.StatusOK, requestRecorder.Code)
+	}
+	want := "Test Item 1\nDescription for Test Item 1\nContent for Test Item 1Test Item 2\nDescription for Test Item 2\nContent for Test Item 2"
+	got := requestRecorder.Body.String()
+	if got != want {
+		t.Errorf("got: %v , want: %v", got, want)
+	}
+}
+
+func TestRSSHandlerError(t *testing.T) {
+	cfg.RSSFeeds = "http://example.comm/rss"
+	req, err := http.NewRequest("GET", "/rss", nil)
+	if err != nil {
+		t.Error(err)
+	}
+	requestRecorder := httptest.NewRecorder()
+	handler := http.HandlerFunc(RSSHandler)
+	handler.ServeHTTP(requestRecorder, req)
+	if requestRecorder.Code != http.StatusInternalServerError {
+		t.Errorf("got: %v, want: %v", requestRecorder.Code, http.StatusInternalServerError)
+	}
+
 }
