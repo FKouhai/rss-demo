@@ -69,6 +69,7 @@ func InitTracer() (*sdktrace.TracerProvider, error) {
 	return tp, nil
 }
 
-func GetTracer() trace.Tracer {
-	return tracer
+// GetTracer used to get the otel tracer being used
+func GetTracer(tracerName string) trace.Tracer {
+	return otel.Tracer(tracerName)
 }

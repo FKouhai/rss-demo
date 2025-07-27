@@ -24,7 +24,7 @@ var cfg ConfigStruct
 // RootHandler exposes the index api handler
 func RootHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	_, span := instrumentation.GetTracer().Start(ctx, "handlers.RootHandler")
+	_, span := instrumentation.GetTracer("myTracer").Start(ctx, "handlers.RootHandler", trace.WithSpanKind(trace.SpanKindServer))
 	defer span.End()
 	log.Info("accepted connection")
 	w.WriteHeader(http.StatusOK)
@@ -34,7 +34,7 @@ func RootHandler(w http.ResponseWriter, r *http.Request) {
 // ConfigHandler reads the config sent via json and stores it in memory
 func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	_, span := instrumentation.GetTracer().Start(ctx, "handlers.ConfigHandler")
+	_, span := instrumentation.GetTracer("myTracer").Start(ctx, "handlers.ConfigHandler")
 	defer span.End()
 	log.Info("accepted connection")
 	if r.Method != http.MethodPost {
@@ -72,7 +72,7 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 // HealthzHandler is the route that exposes a healthcheck
 func HealthzHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	_, span := instrumentation.GetTracer().Start(ctx, "handlers.HealthzHandler")
+	_, span := instrumentation.GetTracer("myTracer").Start(ctx, "handlers.HealthzHandler")
 	defer span.End()
 	log.Info("connection to /health established")
 	w.WriteHeader(http.StatusOK)
@@ -91,7 +91,7 @@ func HealthzHandler(w http.ResponseWriter, r *http.Request) {
 // RSSHandler is the route that exposes the rss feeds that have been polled
 func RSSHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	_, span := instrumentation.GetTracer().Start(ctx, "handlers.RSSHandler")
+	rctx, span := instrumentation.GetTracer("myTracer").Start(ctx, "handlers.RSSHandler")
 	defer span.End()
 	// TODO format as a JSON blob the response contents from the RSS feeds.
 	// TODO mock the /rss endpoint content and test against it
@@ -101,7 +101,7 @@ func RSSHandler(w http.ResponseWriter, r *http.Request) {
 	// Add a way for user auth and per user rss feeds
 	// Auth should be added to /config and /rss
 	log.Info("connection to /rss established")
-	feeds, err := ParseRSS(ctx, cfg.RSSFeeds)
+	feeds, err := ParseRSS(rctx, cfg.RSSFeeds)
 	if err != nil {
 		log.Debug(err.Error())
 		w.WriteHeader(http.StatusInternalServerError)
@@ -118,7 +118,7 @@ func RSSHandler(w http.ResponseWriter, r *http.Request) {
 
 // ParseRSS returns the rss feed with all its items
 func ParseRSS(ctx context.Context, feedURL string) (*gofeed.Feed, error) {
-	_, span := instrumentation.GetTracer().Start(ctx, "helper.ParseRSS")
+	_, span := instrumentation.GetTracer("myTracer").Start(ctx, "helper.ParseRSS")
 	defer span.End()
 	span.AddEvent("PARSING_FEED")
 	feedParser := gofeed.NewParser()

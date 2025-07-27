@@ -2,11 +2,16 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"reflect"
 	"testing"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace/noop"
 )
 
 const mockRSSFeedContent = `
@@ -30,11 +35,21 @@ const mockRSSFeedContent = `
 </rss>
 `
 
-func TestMain(t *testing.T) {
-	req, err := http.NewRequest("GET", "/", nil)
+func newTestRequest(method, url string, body []byte) *http.Request {
+	req, err := http.NewRequestWithContext(context.Background(), method, url, bytes.NewBuffer(body))
 	if err != nil {
-		t.Fatal(err)
+		panic(err)
 	}
+	return req
+}
+
+func TestMain(m *testing.M) {
+	otel.SetTracerProvider(noop.NewTracerProvider())
+	exitCode := m.Run()
+	os.Exit(exitCode)
+}
+func TestRoot(t *testing.T) {
+	req := newTestRequest("GET", "/", nil)
 	requestRecorder := httptest.NewRecorder()
 	handler := http.HandlerFunc(RootHandler)
 	handler.ServeHTTP(requestRecorder, req)
@@ -118,7 +133,7 @@ func startMockRSSFeedServer() *httptest.Server {
 func TestParseRSS(t *testing.T) {
 	mockServer := startMockRSSFeedServer()
 	defer mockServer.Close()
-	feed, err := ParseRSS(mockServer.URL)
+	feed, err := ParseRSS(context.TODO(), mockServer.URL)
 	if err != nil {
 		t.Error(err)
 	}
@@ -165,6 +180,11 @@ func TestRSSHandlerError(t *testing.T) {
 	handler.ServeHTTP(requestRecorder, req)
 	if requestRecorder.Code != http.StatusInternalServerError {
 		t.Errorf("got: %v, want: %v", requestRecorder.Code, http.StatusInternalServerError)
+	}
+	want := ""
+	got := requestRecorder.Body.String()
+	if got != want {
+		t.Errorf("want: %v, got :%v", want, got)
 	}
 
 }
