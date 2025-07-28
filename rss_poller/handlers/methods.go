@@ -96,15 +96,16 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 	jReader := strings.NewReader(string(body))
 	err = json.NewDecoder(jReader).Decode(&cfg)
 	if err != nil {
-		log.Error(err.Error())
+		w.WriteHeader(http.StatusBadRequest)
 		log.Error(err.Error())
 		span.RecordError(err, trace.WithStackTrace(true))
-		span.SetStatus(http.StatusInternalServerError, err.Error())
+		span.SetStatus(http.StatusBadRequest, err.Error())
 		attributes := spanAttrs{
-			httpCode: attribute.Int("http.status", http.StatusInternalServerError),
+			httpCode: attribute.Int("http.status", http.StatusBadRequest),
 			method:   attribute.String("http.method", "POST"),
 		}
 		span = setSpanAttributes(span, attributes)
+		return
 	}
 	span = setSpanAttributes(span, attributes)
 	w.Write([]byte(cfg.RSSFeeds))

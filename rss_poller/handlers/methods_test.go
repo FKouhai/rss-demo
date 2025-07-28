@@ -99,6 +99,40 @@ func TestConfigNotGet(t *testing.T) {
 	}
 }
 
+func TestConfigJSONDecodeError(t *testing.T) {
+	payload := []byte(`{"wrong_feeds":1a}`)
+	req, err := http.NewRequest("POST", "/config", bytes.NewBuffer(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	requestRecorder := httptest.NewRecorder()
+	handler := http.HandlerFunc(ConfigHandler)
+	handler.ServeHTTP(requestRecorder, req)
+	want := http.StatusBadRequest
+	got := requestRecorder.Code
+	if got != want {
+		t.Errorf("Want: %v, Got: %v", want, got)
+	}
+}
+
+func TestConfigWrongContentType(t *testing.T) {
+	payload := []byte(`{"rss_feeds": "https://example.com/rss"}`)
+	req, err := http.NewRequest("POST", "/config", bytes.NewBuffer(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	requestRecorder := httptest.NewRecorder()
+	handler := http.HandlerFunc(ConfigHandler)
+	handler.ServeHTTP(requestRecorder, req)
+	want := http.StatusBadRequest
+	got := requestRecorder.Code
+	if got != want {
+		t.Errorf("Want: %v, Got: %v", want, got)
+	}
+}
+
 func TestHealth(t *testing.T) {
 	req, err := http.NewRequest("GET", "/healthz", nil)
 	if err != nil {
@@ -186,5 +220,4 @@ func TestRSSHandlerError(t *testing.T) {
 	if got != want {
 		t.Errorf("want: %v, got :%v", want, got)
 	}
-
 }
