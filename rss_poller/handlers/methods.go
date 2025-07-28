@@ -174,6 +174,7 @@ func RSSHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	rctx, span := instrumentation.GetTracer("poller").Start(ctx, "handlers.RSSHandler", trace.WithSpanKind(trace.SpanKindServer))
 	defer span.End()
+	feeds := globalFeed
 	attributes := spanAttrs{
 		httpCode: attribute.Int("http.status", http.StatusOK),
 		method:   attribute.String("http.method", "GET"),
@@ -185,18 +186,22 @@ func RSSHandler(w http.ResponseWriter, r *http.Request) {
 	// Add a way for user auth and per user rss feeds
 	// Auth should be added to /config and /rss
 	log.Info("connection to /rss established")
-	feeds, err := ParseRSS(rctx, cfg.RSSFeeds)
-	if err != nil {
-		log.Debug(err.Error())
-		w.WriteHeader(http.StatusInternalServerError)
-		span.RecordError(err, trace.WithStackTrace(true))
-		span.SetStatus(http.StatusInternalServerError, err.Error())
-		attributes := spanAttrs{
-			httpCode: attribute.Int("http.status", http.StatusInternalServerError),
-			method:   attribute.String("http.method", "GET"),
+	// checks if feeds have already been set, otherwise call ParseRSS and set the feeds locally
+	if feeds == nil {
+		var err error
+		feeds, err = ParseRSS(rctx, cfg.RSSFeeds)
+		if err != nil {
+			log.Debug(err.Error())
+			w.WriteHeader(http.StatusInternalServerError)
+			span.RecordError(err, trace.WithStackTrace(true))
+			span.SetStatus(http.StatusInternalServerError, err.Error())
+			attributes := spanAttrs{
+				httpCode: attribute.Int("http.status", http.StatusInternalServerError),
+				method:   attribute.String("http.method", "GET"),
+			}
+			span = setSpanAttributes(span, attributes)
+			return
 		}
-		span = setSpanAttributes(span, attributes)
-		return
 	}
 	for _, v := range feeds.Items {
 		w.Write([]byte(v.Title + "\n"))
