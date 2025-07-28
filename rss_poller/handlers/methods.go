@@ -187,7 +187,9 @@ func RSSHandler(w http.ResponseWriter, r *http.Request) {
 	// Auth should be added to /config and /rss
 	log.Info("connection to /rss established")
 	// checks if feeds have already been set, otherwise call ParseRSS and set the feeds locally
+	// used as a sanity check to prevent possible race conditions
 	if feeds == nil {
+		log.Info("got null feeds")
 		var err error
 		feeds, err = ParseRSS(rctx, cfg.RSSFeeds)
 		if err != nil {
