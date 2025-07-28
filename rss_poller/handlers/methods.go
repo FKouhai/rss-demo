@@ -26,6 +26,7 @@ type spanAttrs struct {
 	httpCode attribute.KeyValue
 }
 
+var globalFeed *gofeed.Feed
 var cfg ConfigStruct
 
 // RootHandler exposes the index api handler
@@ -107,6 +108,11 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	span = setSpanAttributes(span, attributes)
 	w.Write([]byte(cfg.RSSFeeds))
+
+	/*
+	 polling mechanism:
+	 taking advantage of the time ticker we are able to call every 5 minutes the ParseRSS function
+	*/
 	ticker := time.NewTicker(300 * time.Second)
 	done := make(chan bool)
 	go func() {
@@ -116,12 +122,28 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 				return
 			case t := <-ticker.C:
 				log.Info(t.String())
+				/*
+				 creating a new span so in our tracing tool we do not start to see 1 span every 5 minutes
+				 making the transaction take an infinite amount of time
+				*/
 				pollCtx, pollSpan := instrumentation.GetTracer("poller").Start(
 					context.Background(),
 					"poller.RSSFetchCycle",
 					trace.WithSpanKind(trace.SpanKindInternal),
 				)
-				ParseRSS(pollCtx, cfg.RSSFeeds)
+				globalFeed, err = ParseRSS(pollCtx, cfg.RSSFeeds)
+				if err != nil {
+					attributes := spanAttrs{
+						httpCode: attribute.Int("http.status", http.StatusInternalServerError),
+						method:   attribute.String("http.method", "POST"),
+					}
+					w.WriteHeader(http.StatusInternalServerError)
+					pollSpan.RecordError(err, trace.WithStackTrace(true))
+					pollSpan = setSpanAttributes(pollSpan, attributes)
+					pollSpan.SetStatus(http.StatusInternalServerError, err.Error())
+					return
+				}
+				// Once the call to ParseRSS is done we stop our span
 				pollSpan.End()
 			}
 		}
