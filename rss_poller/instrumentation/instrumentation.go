@@ -3,11 +3,11 @@ package instrumentation
 
 import (
 	"context"
-	"fmt"
 	"os"
 
 	"sync"
 
+	log "github.com/FKouhai/rss-poller/logger"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
@@ -28,7 +28,7 @@ func InitTracer() (*sdktrace.TracerProvider, error) {
 		"content-type": "application/json",
 	}
 	ep := os.Getenv("OTEL_EP")
-	fmt.Printf("\tusing OTEL_EP=%s\n", ep)
+	log.Info("using OTEL_EP=" + ep)
 	exporter, err := otlptrace.New(
 		context.Background(),
 		otlptracegrpc.NewClient(
