@@ -196,7 +196,7 @@ func TestRSSHandler(t *testing.T) {
 	if requestRecorder.Code != http.StatusOK {
 		t.Errorf("expected %v, got: %v", http.StatusOK, requestRecorder.Code)
 	}
-	want := "Test Item 1\nDescription for Test Item 1\nContent for Test Item 1Test Item 2\nDescription for Test Item 2\nContent for Test Item 2"
+	want := `[{"title":"Test Item 1","description":"Description for Test Item 1","content":"Content for Test Item 1","link":"http://example.com/item1"},{"title":"Test Item 2","description":"Description for Test Item 2","content":"Content for Test Item 2","link":"http://example.com/item2"}]`
 	got := requestRecorder.Body.String()
 	if got != want {
 		t.Errorf("got: %v , want: %v", got, want)

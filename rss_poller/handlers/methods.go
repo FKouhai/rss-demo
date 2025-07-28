@@ -21,12 +21,22 @@ import (
 type ConfigStruct struct {
 	RSSFeeds string `json:"rss_feeds"`
 }
+
 type spanAttrs struct {
 	method   attribute.KeyValue
 	httpCode attribute.KeyValue
 }
 
+type feedsJSON struct {
+	Title       string        `json:"title,omitempty"`
+	Description string        `json:"description,omitempty"`
+	Content     string        `json:"content,omitempty"`
+	Link        string        `json:"link,omitempty"`
+	Image       *gofeed.Image `json:"image,omitempty"`
+}
+
 var globalFeed *gofeed.Feed
+var globalBlob []byte
 var cfg ConfigStruct
 
 // RootHandler exposes the index api handler
@@ -206,11 +216,11 @@ func RSSHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	for _, v := range feeds.Items {
-		w.Write([]byte(v.Title + "\n"))
-		w.Write([]byte(v.Description + "\n"))
-		w.Write([]byte(v.Content))
+	body, err := toJSON(feeds)
+	if err != nil {
+		return
 	}
+	w.Write(body)
 	span = setSpanAttributes(span, attributes)
 }
 
@@ -234,4 +244,33 @@ func ParseRSS(ctx context.Context, feedURL string) (*gofeed.Feed, error) {
 func setSpanAttributes(span trace.Span, attributes spanAttrs) trace.Span {
 	span.SetAttributes(attributes.httpCode, attributes.method)
 	return span
+}
+
+func toJSON(feeds *gofeed.Feed) ([]byte, error) {
+	var jFeed feedsJSON
+	var jFeeds []feedsJSON
+	_, span := instrumentation.GetTracer("poller").Start(context.Background(), "helper.toJSON", trace.WithSpanKind(trace.SpanKindInternal))
+	defer span.End()
+	span.AddEvent("INTERNAL::toJSON")
+	for _, v := range feeds.Items {
+		jFeed.Title = v.Title
+		jFeed.Content = v.Content
+		jFeed.Description = v.Description
+		jFeed.Link = v.Link
+		jFeed.Image = v.Image
+		jFeeds = append(jFeeds, jFeed)
+	}
+	b, err := json.Marshal(&jFeeds)
+	if err != nil {
+		log.Debug(err.Error())
+		span.RecordError(err, trace.WithStackTrace(true))
+		span.SetStatus(http.StatusExpectationFailed, err.Error())
+		attributes := spanAttrs{
+			httpCode: attribute.Int("http.status", http.StatusInternalServerError),
+			method:   attribute.String("http.method", "GET"),
+		}
+		span = setSpanAttributes(span, attributes)
+	}
+
+	return b, nil
 }
