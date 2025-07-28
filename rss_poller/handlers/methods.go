@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 
+	"time"
+
 	"github.com/FKouhai/rss-poller/instrumentation"
 	log "github.com/FKouhai/rss-poller/logger"
 	"github.com/mmcdole/gofeed"
@@ -105,6 +107,25 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	span = setSpanAttributes(span, attributes)
 	w.Write([]byte(cfg.RSSFeeds))
+	ticker := time.NewTicker(300 * time.Second)
+	done := make(chan bool)
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			case t := <-ticker.C:
+				log.Info(t.String())
+				pollCtx, pollSpan := instrumentation.GetTracer("poller").Start(
+					context.Background(),
+					"poller.RSSFetchCycle",
+					trace.WithSpanKind(trace.SpanKindInternal),
+				)
+				ParseRSS(pollCtx, cfg.RSSFeeds)
+				pollSpan.End()
+			}
+		}
+	}()
 }
 
 // HealthzHandler is the route that exposes a healthcheck
@@ -136,7 +157,6 @@ func RSSHandler(w http.ResponseWriter, r *http.Request) {
 		method:   attribute.String("http.method", "GET"),
 	}
 	// TODO format as a JSON blob the response contents from the RSS feeds.
-	// TODO mock the /rss endpoint content and test against it
 	// The json blob should contain the title,description,content and source url of where to find the actual content
 	// With that endpoint exposed the notification microservice should be contacted to trigger a notification to the end user destination source  (telegram,discord)
 	// auth between services should be based on mtls
