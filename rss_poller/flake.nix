@@ -26,6 +26,8 @@
         go-test = pkgs.stdenvNoCC.mkDerivation {
           name = "go-test";
           dontBuild = true;
+          __noChroot = true;
+          doCheck = true;
           src = ./.;
           nativeBuildInputs = with pkgs; [
             go
@@ -33,7 +35,6 @@
           ];
           checkPhase = ''
             go test -v ./...
-            aaaaa
           '';
           installPhase = ''
             mkdir "$out"
@@ -44,6 +45,7 @@
           name = "go-lint";
           dontBuild = true;
           src = ./.;
+          doCheck = true;
           nativeBuildInputs = with pkgs; [
             golangci-lint
             go

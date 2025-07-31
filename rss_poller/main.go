@@ -19,9 +19,10 @@ func main() {
 			log.Debug(err.Error())
 		}
 	}()
-	http.HandleFunc("/", handlers.RootHandler)
 	http.HandleFunc("/config", handlers.ConfigHandler)
 	http.HandleFunc("/healthz", handlers.HealthzHandler)
 	http.HandleFunc("/rss", handlers.RSSHandler)
+	log.InfoFmt("starting server on port %d", 3000)
+	// nolint
 	http.ListenAndServe(":3000", nil)
 }
