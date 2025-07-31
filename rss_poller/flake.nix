@@ -27,13 +27,13 @@
           name = "go-test";
           dontBuild = true;
           src = ./.;
-          doCheck = false;
           nativeBuildInputs = with pkgs; [
             go
             writableTmpDirAsHomeHook
           ];
           checkPhase = ''
             go test -v ./...
+            aaaaa
           '';
           installPhase = ''
             mkdir "$out"
@@ -44,7 +44,6 @@
           name = "go-lint";
           dontBuild = true;
           src = ./.;
-          doCheck = false;
           nativeBuildInputs = with pkgs; [
             golangci-lint
             go

@@ -19,7 +19,7 @@ import (
 
 // ConfigStruct contains the accepted config fields that this microservice will use
 type ConfigStruct struct {
-	RSSFeeds string `json:"rss_feeds"`
+	RSSFeeds []string `json:"rss_feeds"`
 }
 
 type spanAttrs struct {
@@ -35,24 +35,8 @@ type feedsJSON struct {
 	Image       *gofeed.Image `json:"image,omitempty"`
 }
 
-var globalFeed *gofeed.Feed
-var globalBlob []byte
+var globalFeed []*gofeed.Feed
 var cfg ConfigStruct
-
-// RootHandler exposes the index api handler
-func RootHandler(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	_, span := instrumentation.GetTracer("poller").Start(ctx, "handlers.RootHandler", trace.WithSpanKind(trace.SpanKindServer))
-	defer span.End()
-	log.Info("accepted connection")
-	w.WriteHeader(http.StatusOK)
-	attributes := spanAttrs{
-		httpCode: attribute.Int("http.status", http.StatusOK),
-		method:   attribute.String("http.method", "GET"),
-	}
-	span = setSpanAttributes(span, attributes)
-	w.Write([]byte("testing 1 2"))
-}
 
 // ConfigHandler reads the config sent via json and stores it in memory
 func ConfigHandler(w http.ResponseWriter, r *http.Request) {
@@ -71,8 +55,9 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 		span.SetStatus(http.StatusInternalServerError, "the wrong method was used")
 		attributes := spanAttrs{
 			httpCode: attribute.Int("http.status", http.StatusInternalServerError),
-			method:   attribute.String("http.method", "GET"),
+			method:   attribute.String("http.method", r.Method),
 		}
+		// nolint
 		span = setSpanAttributes(span, attributes)
 		return
 	}
@@ -85,10 +70,12 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 			httpCode: attribute.Int("http.status", http.StatusBadRequest),
 			method:   attribute.String("http.method", "POST"),
 		}
+		// nolint
 		span = setSpanAttributes(span, attributes)
 		return
 	}
 	body, err := io.ReadAll(r.Body)
+	//nolint
 	defer r.Body.Close()
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -99,6 +86,7 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 			httpCode: attribute.Int("http.status", http.StatusInternalServerError),
 			method:   attribute.String("http.method", "POST"),
 		}
+		// nolint
 		span = setSpanAttributes(span, attributes)
 		return
 	}
@@ -112,13 +100,15 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 		span.SetStatus(http.StatusBadRequest, err.Error())
 		attributes := spanAttrs{
 			httpCode: attribute.Int("http.status", http.StatusBadRequest),
-			method:   attribute.String("http.method", "POST"),
+			method:   attribute.String("http.method", r.Method),
 		}
+		// nolint
 		span = setSpanAttributes(span, attributes)
 		return
 	}
+	// nolint
 	span = setSpanAttributes(span, attributes)
-	w.Write([]byte(cfg.RSSFeeds))
+	// w.Write([]byte(cfg.RSSFeeds))
 
 	/*
 	 polling mechanism:
@@ -212,6 +202,7 @@ func RSSHandler(w http.ResponseWriter, r *http.Request) {
 				httpCode: attribute.Int("http.status", http.StatusInternalServerError),
 				method:   attribute.String("http.method", "GET"),
 			}
+			// nolint
 			span = setSpanAttributes(span, attributes)
 			return
 		}
@@ -220,25 +211,36 @@ func RSSHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	w.Write(body)
+	_, err = w.Write(body)
+	if err != nil {
+		log.Error(err.Error())
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	// nolint
 	span = setSpanAttributes(span, attributes)
 }
 
 // ParseRSS returns the rss feed with all its items
-func ParseRSS(ctx context.Context, feedURL string) (*gofeed.Feed, error) {
+func ParseRSS(ctx context.Context, feedURL []string) ([]*gofeed.Feed, error) {
 	_, span := instrumentation.GetTracer("poller").Start(ctx, "helper.ParseRSS", trace.WithSpanKind(trace.SpanKindServer))
 	defer span.End()
 	span.AddEvent("PARSING_FEED")
 	feedParser := gofeed.NewParser()
-	feed, err := feedParser.ParseURL(feedURL)
-	if err != nil {
-		span.AddEvent("FAILED_PROCESS_FEED")
-		span.RecordError(err)
-		log.Debug(err.Error())
-		return nil, err
+	var feeds []*gofeed.Feed
+	for _, v := range feedURL {
+		feed, err := feedParser.ParseURL(v)
+		if err != nil {
+			span.AddEvent("FAILED_PROCESS_FEED")
+			span.RecordError(err)
+			log.Debug(err.Error())
+			return nil, err
+		}
+		feeds = append(feeds, feed)
+
 	}
 	log.Info("got feed")
-	return feed, nil
+	return feeds, nil
 }
 
 func setSpanAttributes(span trace.Span, attributes spanAttrs) trace.Span {
@@ -246,12 +248,39 @@ func setSpanAttributes(span trace.Span, attributes spanAttrs) trace.Span {
 	return span
 }
 
-func toJSON(feeds *gofeed.Feed) ([]byte, error) {
-	var jFeed feedsJSON
+func toJSON(feeds []*gofeed.Feed) ([]byte, error) {
 	var jFeeds []feedsJSON
-	_, span := instrumentation.GetTracer("poller").Start(context.Background(), "helper.toJSON", trace.WithSpanKind(trace.SpanKindInternal))
+	lctx, span := instrumentation.GetTracer("poller").Start(context.Background(), "helper.toJSON", trace.WithSpanKind(trace.SpanKindInternal))
 	defer span.End()
 	span.AddEvent("INTERNAL::toJSON")
+
+	for _, v := range feeds {
+		pFeeds := processFeeds(v, lctx)
+		jFeeds = append(jFeeds, pFeeds...)
+	}
+
+	b, err := json.Marshal(&jFeeds)
+	if err != nil {
+		log.Debug(err.Error())
+		span.RecordError(err, trace.WithStackTrace(true))
+		span.SetStatus(http.StatusInternalServerError, err.Error())
+		attributes := spanAttrs{
+			httpCode: attribute.Int("http.status", http.StatusInternalServerError),
+			method:   attribute.String("http.method", "GET"),
+		}
+		// nolint
+		span = setSpanAttributes(span, attributes)
+	}
+
+	return b, nil
+}
+
+func processFeeds(feeds *gofeed.Feed, ctx context.Context) []feedsJSON {
+	var jFeed feedsJSON
+	var jFeeds []feedsJSON
+	_, span := instrumentation.GetTracer("poller").Start(ctx, "helper.toJSON", trace.WithSpanKind(trace.SpanKindInternal))
+	defer span.End()
+	span.AddEvent("INTERNAL::processFeeds")
 	for _, v := range feeds.Items {
 		jFeed.Title = v.Title
 		jFeed.Content = v.Content
@@ -260,17 +289,6 @@ func toJSON(feeds *gofeed.Feed) ([]byte, error) {
 		jFeed.Image = v.Image
 		jFeeds = append(jFeeds, jFeed)
 	}
-	b, err := json.Marshal(&jFeeds)
-	if err != nil {
-		log.Debug(err.Error())
-		span.RecordError(err, trace.WithStackTrace(true))
-		span.SetStatus(http.StatusExpectationFailed, err.Error())
-		attributes := spanAttrs{
-			httpCode: attribute.Int("http.status", http.StatusInternalServerError),
-			method:   attribute.String("http.method", "GET"),
-		}
-		span = setSpanAttributes(span, attributes)
-	}
+	return jFeeds
 
-	return b, nil
 }

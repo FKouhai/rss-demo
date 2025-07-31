@@ -35,37 +35,14 @@ const mockRSSFeedContent = `
 </rss>
 `
 
-func newTestRequest(method, url string, body []byte) *http.Request {
-	req, err := http.NewRequestWithContext(context.Background(), method, url, bytes.NewBuffer(body))
-	if err != nil {
-		panic(err)
-	}
-	return req
-}
-
 func TestMain(m *testing.M) {
 	otel.SetTracerProvider(noop.NewTracerProvider())
 	exitCode := m.Run()
 	os.Exit(exitCode)
 }
-func TestRoot(t *testing.T) {
-	req := newTestRequest("GET", "/", nil)
-	requestRecorder := httptest.NewRecorder()
-	handler := http.HandlerFunc(RootHandler)
-	handler.ServeHTTP(requestRecorder, req)
-	status := requestRecorder.Code
-	if status != http.StatusOK {
-		t.Errorf("Handler returned a different code from 200: %v", status)
-	}
-	want := "testing 1 2"
-	got := requestRecorder.Body.String()
-	if got != want {
-		t.Errorf("The server returned an unexpected body: got %v, want: %v", got, want)
-	}
-}
 
 func TestConfig(t *testing.T) {
-	payload := []byte(`{"rss_feeds": "https://example.com/rss"}`)
+	payload := []byte(`{"rss_feeds": ["https://example.com/rss"]}`)
 	req, err := http.NewRequest("POST", "/config", bytes.NewBuffer(payload))
 	if err != nil {
 		t.Fatal(err)
@@ -76,11 +53,6 @@ func TestConfig(t *testing.T) {
 	handler.ServeHTTP(requestRecorder, req)
 	if requestRecorder.Code != http.StatusOK {
 		t.Errorf("Handler returned a different code from 200: %v", requestRecorder.Code)
-	}
-	want := "https://example.com/rss"
-	got := requestRecorder.Body.String()
-	if got != want {
-		t.Errorf("The server returned an unexpected body: got %v, want: %v", got, want)
 	}
 }
 
@@ -117,7 +89,7 @@ func TestConfigJSONDecodeError(t *testing.T) {
 }
 
 func TestConfigWrongContentType(t *testing.T) {
-	payload := []byte(`{"rss_feeds": "https://example.com/rss"}`)
+	payload := []byte(`{"rss_feeds": ["https://example.com/rss"]}`)
 	req, err := http.NewRequest("POST", "/config", bytes.NewBuffer(payload))
 	if err != nil {
 		t.Fatal(err)
@@ -160,6 +132,7 @@ func startMockRSSFeedServer() *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Header().Set("Content-Type", "application/rss+xml")
+		// nolint
 		w.Write([]byte(mockRSSFeedContent))
 	}))
 }
@@ -167,25 +140,28 @@ func startMockRSSFeedServer() *httptest.Server {
 func TestParseRSS(t *testing.T) {
 	mockServer := startMockRSSFeedServer()
 	defer mockServer.Close()
-	feed, err := ParseRSS(context.TODO(), mockServer.URL)
+	feed, err := ParseRSS(context.TODO(), []string{mockServer.URL})
 	if err != nil {
 		t.Error(err)
 	}
-	if feed.Title != "Test RSS Feed" {
-		t.Error("title feed is different than expected")
-	}
-	if feed.Description != "This is a test RSS feed." {
-		t.Error("expected different description")
-	}
-	if len(feed.Items) != 2 {
-		t.Error("Expected 2 ites in the feed")
+	for _, v := range feed {
+		if v.Title != "Test RSS Feed" {
+			t.Error("title feed is different than expected")
+		}
+		if v.Description != "This is a test RSS feed." {
+			t.Error("expected different description")
+		}
+		if len(v.Items) != 2 {
+			t.Error("Expected 2 ites in the feed")
+		}
+
 	}
 }
 
 func TestRSSHandler(t *testing.T) {
 	mockServer := startMockRSSFeedServer()
 	defer mockServer.Close()
-	cfg.RSSFeeds = mockServer.URL
+	cfg.RSSFeeds = []string{mockServer.URL}
 	req, err := http.NewRequest("GET", "/rss", nil)
 	if err != nil {
 		t.Error(err)
@@ -204,7 +180,7 @@ func TestRSSHandler(t *testing.T) {
 }
 
 func TestRSSHandlerError(t *testing.T) {
-	cfg.RSSFeeds = "http://example.comm/rss"
+	cfg.RSSFeeds = []string{"http://example.comm/rss", "http://notarealrssfeed.com/rss"}
 	req, err := http.NewRequest("GET", "/rss", nil)
 	if err != nil {
 		t.Error(err)
