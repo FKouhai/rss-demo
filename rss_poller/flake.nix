@@ -58,6 +58,25 @@
             mkdir "$out"
           '';
         };
+
+        # variable for rss-poller package
+        rss-poller = callPackage ./. {
+          inherit (gomod2nix.legacyPackages.${system}) ;
+        };
+
+        # build for container image
+        dockerImage = pkgs.dockerTools.buildLayeredImage {
+          name = "rss-poller";
+          tag = "latest";
+          created = "now";
+          contents = [
+            pkgs.cacert
+            pkgs.openssl
+          ];
+          config = {
+            Cmd = [ "${rss-poller}/bin/rss-poller" ];
+          };
+        };
       in
       {
         checks = {

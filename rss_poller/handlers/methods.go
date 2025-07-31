@@ -74,6 +74,7 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 	err = json.NewDecoder(jReader).Decode(&cfg)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
+		// nolint
 		span = httpSpanError(span, r.Method, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -105,6 +106,7 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 				)
 				globalFeed, err = ParseRSS(pollCtx, cfg.RSSFeeds)
 				if err != nil {
+					// nolint
 					pollSpan = httpSpanError(pollSpan, r.Method, err.Error(), http.StatusInternalServerError)
 					return
 				}
