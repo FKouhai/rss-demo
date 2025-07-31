@@ -79,12 +79,11 @@
         };
       in
       {
+        inherit dockerImage rss-poller;
         checks = {
           inherit go-test go-lint;
         };
-        packages.default = callPackage ./. {
-          inherit (gomod2nix.legacyPackages.${system}) ;
-        };
+        packages.default = rss-poller;
         devShells.default = callPackage ./shell.nix {
           inherit (gomod2nix.legacyPackages.${system}) mkGoEnv gomod2nix;
         };
