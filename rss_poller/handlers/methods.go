@@ -50,28 +50,14 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 	log.Info("accepted connection")
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusBadRequest)
-		log.Error("the wrong method was used")
-		span.RecordError(errors.New("the wrong method was used"), trace.WithStackTrace(true))
-		span.SetStatus(http.StatusInternalServerError, "the wrong method was used")
-		attributes := spanAttrs{
-			httpCode: attribute.Int("http.status", http.StatusInternalServerError),
-			method:   attribute.String("http.method", r.Method),
-		}
 		// nolint
-		span = setSpanAttributes(span, attributes)
+		span = httpSpanError(span, r.Method, "the wrong method was used", http.StatusBadRequest)
 		return
 	}
 	if r.Header.Get("Content-Type") != "application/json" {
 		w.WriteHeader(http.StatusBadRequest)
-		log.Error("the request does not contain a JSON payload")
-		span.RecordError(errors.New("the request does not contain a JSON payload"), trace.WithStackTrace(true))
-		span.SetStatus(http.StatusInternalServerError, "the request does not contain a JSON payload")
-		attributes := spanAttrs{
-			httpCode: attribute.Int("http.status", http.StatusBadRequest),
-			method:   attribute.String("http.method", "POST"),
-		}
 		// nolint
-		span = setSpanAttributes(span, attributes)
+		span = httpSpanError(span, r.Method, "the request does not contain a JSON payload", http.StatusBadRequest)
 		return
 	}
 	body, err := io.ReadAll(r.Body)
@@ -79,15 +65,8 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		log.Error("Unexpected request content")
-		span.RecordError(err, trace.WithStackTrace(true))
-		span.SetStatus(http.StatusInternalServerError, err.Error())
-		attributes := spanAttrs{
-			httpCode: attribute.Int("http.status", http.StatusInternalServerError),
-			method:   attribute.String("http.method", "POST"),
-		}
-		// nolint
-		span = setSpanAttributes(span, attributes)
+		//nolint
+		span = httpSpanError(span, r.Method, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -95,15 +74,7 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 	err = json.NewDecoder(jReader).Decode(&cfg)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		log.Error(err.Error())
-		span.RecordError(err, trace.WithStackTrace(true))
-		span.SetStatus(http.StatusBadRequest, err.Error())
-		attributes := spanAttrs{
-			httpCode: attribute.Int("http.status", http.StatusBadRequest),
-			method:   attribute.String("http.method", r.Method),
-		}
-		// nolint
-		span = setSpanAttributes(span, attributes)
+		span = httpSpanError(span, r.Method, err.Error(), http.StatusBadRequest)
 		return
 	}
 	// nolint
@@ -134,14 +105,7 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 				)
 				globalFeed, err = ParseRSS(pollCtx, cfg.RSSFeeds)
 				if err != nil {
-					attributes := spanAttrs{
-						httpCode: attribute.Int("http.status", http.StatusInternalServerError),
-						method:   attribute.String("http.method", "POST"),
-					}
-					w.WriteHeader(http.StatusInternalServerError)
-					pollSpan.RecordError(err, trace.WithStackTrace(true))
-					pollSpan = setSpanAttributes(pollSpan, attributes)
-					pollSpan.SetStatus(http.StatusInternalServerError, err.Error())
+					pollSpan = httpSpanError(pollSpan, r.Method, err.Error(), http.StatusInternalServerError)
 					return
 				}
 				// Once the call to ParseRSS is done we stop our span
@@ -194,16 +158,9 @@ func RSSHandler(w http.ResponseWriter, r *http.Request) {
 		var err error
 		feeds, err = ParseRSS(rctx, cfg.RSSFeeds)
 		if err != nil {
-			log.Debug(err.Error())
-			w.WriteHeader(http.StatusInternalServerError)
-			span.RecordError(err, trace.WithStackTrace(true))
-			span.SetStatus(http.StatusInternalServerError, err.Error())
-			attributes := spanAttrs{
-				httpCode: attribute.Int("http.status", http.StatusInternalServerError),
-				method:   attribute.String("http.method", "GET"),
-			}
 			// nolint
-			span = setSpanAttributes(span, attributes)
+			span = httpSpanError(span, r.Method, err.Error(), http.StatusBadRequest)
+			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 	}
@@ -261,15 +218,8 @@ func toJSON(feeds []*gofeed.Feed) ([]byte, error) {
 
 	b, err := json.Marshal(&jFeeds)
 	if err != nil {
-		log.Debug(err.Error())
-		span.RecordError(err, trace.WithStackTrace(true))
-		span.SetStatus(http.StatusInternalServerError, err.Error())
-		attributes := spanAttrs{
-			httpCode: attribute.Int("http.status", http.StatusInternalServerError),
-			method:   attribute.String("http.method", "GET"),
-		}
 		// nolint
-		span = setSpanAttributes(span, attributes)
+		span = httpSpanError(span, "GET", err.Error(), http.StatusBadRequest)
 	}
 
 	return b, nil
@@ -278,7 +228,7 @@ func toJSON(feeds []*gofeed.Feed) ([]byte, error) {
 func processFeeds(feeds *gofeed.Feed, ctx context.Context) []feedsJSON {
 	var jFeed feedsJSON
 	var jFeeds []feedsJSON
-	_, span := instrumentation.GetTracer("poller").Start(ctx, "helper.toJSON", trace.WithSpanKind(trace.SpanKindInternal))
+	_, span := instrumentation.GetTracer("poller").Start(ctx, "helper.PROCESS_FEEDS", trace.WithSpanKind(trace.SpanKindInternal))
 	defer span.End()
 	span.AddEvent("INTERNAL::processFeeds")
 	for _, v := range feeds.Items {
@@ -291,4 +241,16 @@ func processFeeds(feeds *gofeed.Feed, ctx context.Context) []feedsJSON {
 	}
 	return jFeeds
 
+}
+
+func httpSpanError(span trace.Span, method string, logMsg string, httpCode int) trace.Span {
+	log.Error(logMsg)
+	span.RecordError(errors.New(logMsg), trace.WithStackTrace(true))
+	span.SetStatus(http.StatusInternalServerError, logMsg)
+	attributes := spanAttrs{
+		httpCode: attribute.Int("http.status", httpCode),
+		method:   attribute.String("http.method", method),
+	}
+
+	return setSpanAttributes(span, attributes)
 }

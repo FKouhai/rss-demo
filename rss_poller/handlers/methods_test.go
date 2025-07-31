@@ -180,7 +180,7 @@ func TestRSSHandler(t *testing.T) {
 }
 
 func TestRSSHandlerError(t *testing.T) {
-	cfg.RSSFeeds = []string{"http://example.comm/rss", "http://notarealrssfeed.com/rss"}
+	cfg.RSSFeeds = []string{"http://example.com/rss", "http://notarealrssfeed.com/rss"}
 	req, err := http.NewRequest("GET", "/rss", nil)
 	if err != nil {
 		t.Error(err)
@@ -188,8 +188,8 @@ func TestRSSHandlerError(t *testing.T) {
 	requestRecorder := httptest.NewRecorder()
 	handler := http.HandlerFunc(RSSHandler)
 	handler.ServeHTTP(requestRecorder, req)
-	if requestRecorder.Code != http.StatusInternalServerError {
-		t.Errorf("got: %v, want: %v", requestRecorder.Code, http.StatusInternalServerError)
+	if requestRecorder.Code != http.StatusBadRequest {
+		t.Errorf("got: %v, want: %v", requestRecorder.Code, http.StatusBadRequest)
 	}
 	want := ""
 	got := requestRecorder.Body.String()
