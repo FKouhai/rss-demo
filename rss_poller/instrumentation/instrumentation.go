@@ -19,6 +19,8 @@ import (
 )
 
 var tp *sdktrace.TracerProvider
+
+// nolint
 var tracer trace.Tracer
 var once sync.Once
 

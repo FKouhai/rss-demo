@@ -13,6 +13,7 @@ func TestGetTracer(t *testing.T) {
 }
 
 func TestInitNoError(t *testing.T) {
+	// nolint
 	os.Setenv("OTEL_EP", "testingotel12:443")
 	_, err := InitTracer()
 	if err != nil {
