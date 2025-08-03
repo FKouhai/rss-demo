@@ -8,11 +8,11 @@
   inputs.gomod2nix.inputs.flake-utils.follows = "flake-utils";
 
   outputs =
-    { self
-    , nixpkgs
-    , flake-utils
-    , gomod2nix
-    ,
+    {
+      self,
+      nixpkgs,
+      flake-utils,
+      gomod2nix,
     }:
     (flake-utils.lib.eachDefaultSystem (
       system:
@@ -57,14 +57,31 @@
             mkdir "$out"
           '';
         };
+        # variable for rss-notify package
+        rss-notify = callPackage ./. {
+          inherit (gomod2nix.legacyPackages.${system}) ;
+        };
+
+        dockerImage = pkgs.dockerTools.buildLayeredImage {
+          name = "rss-notify";
+          tag = "latest";
+          created = "now";
+          contents = [
+            pkgs.cacert
+            pkgs.openssl
+          ];
+          config = {
+            Cmd = [ "${rss-notify}/bin/rss-notify" ];
+          };
+        };
       in
       {
+        inherit dockerImage rss-notify;
         checks = {
           inherit go-test go-lint;
         };
-        packages.default = callPackage ./. {
-          inherit (gomod2nix.legacyPackages.${system}) buildGoApplication;
-        };
+
+        packages.default = rss-notify;
         devShells.default = callPackage ./shell.nix {
           inherit (gomod2nix.legacyPackages.${system}) mkGoEnv gomod2nix;
         };
