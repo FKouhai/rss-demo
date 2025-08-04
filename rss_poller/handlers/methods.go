@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 
 	"time"
 
@@ -35,8 +36,14 @@ type feedsJSON struct {
 	Image       *gofeed.Image `json:"image,omitempty"`
 }
 
-var globalFeed []*gofeed.Feed
-var cfg ConfigStruct
+var (
+	globalFeed []*gofeed.Feed
+	cfg        ConfigStruct
+	feedMutex  sync.RWMutex
+	// Store ticker and cancel func for cleanup
+	ticker   *time.Ticker
+	cancelFn context.CancelFunc
+)
 
 // ConfigHandler reads the config sent via json and stores it in memory
 func ConfigHandler(w http.ResponseWriter, r *http.Request) {
@@ -47,7 +54,9 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 		httpCode: attribute.Int("http.status", http.StatusOK),
 		method:   attribute.String("http.method", "POST"),
 	}
+
 	log.Info("accepted connection")
+
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusBadRequest)
 		// nolint
@@ -78,6 +87,8 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 		span = httpSpanError(span, r.Method, err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	stopPolling()
 	// nolint
 	span = setSpanAttributes(span, attributes)
 	// w.Write([]byte(cfg.RSSFeeds))
@@ -86,12 +97,15 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 	 polling mechanism:
 	 taking advantage of the time ticker we are able to call every 5 minutes the ParseRSS function
 	*/
-	ticker := time.NewTicker(300 * time.Second)
-	done := make(chan bool)
+	ticker = time.NewTicker(300 * time.Second)
+	pollCtx, cancel := context.WithCancel(context.Background())
+	cancelFn = cancel
 	go func() {
 		for {
 			select {
-			case <-done:
+			case <-pollCtx.Done():
+				log.Info("Stoped polling")
+				ticker.Stop()
 				return
 			case t := <-ticker.C:
 				log.Info(t.String())
@@ -104,17 +118,31 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 					"poller.RSSFetchCycle",
 					trace.WithSpanKind(trace.SpanKindInternal),
 				)
-				globalFeed, err = ParseRSS(pollCtx, cfg.RSSFeeds)
+				feeds, err := ParseRSS(pollCtx, cfg.RSSFeeds)
 				if err != nil {
 					// nolint
 					pollSpan = httpSpanError(pollSpan, r.Method, err.Error(), http.StatusInternalServerError)
+					pollSpan.End()
 					return
 				}
+				// updating cached feed safely to prevent race conditions
+				feedMutex.Lock()
+				globalFeed = feeds
+				feedMutex.Unlock()
 				// Once the call to ParseRSS is done we stop our span
 				pollSpan.End()
 			}
 		}
 	}()
+}
+
+func stopPolling() {
+	if cancelFn != nil {
+		cancelFn()
+	}
+	if ticker != nil {
+		ticker.Stop()
+	}
 }
 
 // HealthzHandler is the route that exposes a healthcheck
