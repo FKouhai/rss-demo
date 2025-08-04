@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -174,12 +173,6 @@ func RSSHandler(w http.ResponseWriter, r *http.Request) {
 		httpCode: attribute.Int("http.status", http.StatusOK),
 		method:   attribute.String("http.method", "GET"),
 	}
-	// TODO format as a JSON blob the response contents from the RSS feeds.
-	// The json blob should contain the title,description,content and source url of where to find the actual content
-	// With that endpoint exposed the notification microservice should be contacted to trigger a notification to the end user destination source  (telegram,discord)
-	// auth between services should be based on mtls
-	// Add a way for user auth and per user rss feeds
-	// Auth should be added to /config and /rss
 	log.Info("connection to /rss established")
 	// checks if feeds have already been set, otherwise call ParseRSS and set the feeds locally
 	// used as a sanity check to prevent possible race conditions
@@ -228,59 +221,4 @@ func ParseRSS(ctx context.Context, feedURL []string) ([]*gofeed.Feed, error) {
 	}
 	log.Info("got feed")
 	return feeds, nil
-}
-
-func setSpanAttributes(span trace.Span, attributes spanAttrs) trace.Span {
-	span.SetAttributes(attributes.httpCode, attributes.method)
-	return span
-}
-
-func toJSON(feeds []*gofeed.Feed) ([]byte, error) {
-	var jFeeds []feedsJSON
-	lctx, span := instrumentation.GetTracer("poller").Start(context.Background(), "helper.toJSON", trace.WithSpanKind(trace.SpanKindInternal))
-	defer span.End()
-	span.AddEvent("INTERNAL::toJSON")
-
-	for _, v := range feeds {
-		pFeeds := processFeeds(v, lctx)
-		jFeeds = append(jFeeds, pFeeds...)
-	}
-
-	b, err := json.Marshal(&jFeeds)
-	if err != nil {
-		// nolint
-		span = httpSpanError(span, "GET", err.Error(), http.StatusBadRequest)
-	}
-
-	return b, nil
-}
-
-func processFeeds(feeds *gofeed.Feed, ctx context.Context) []feedsJSON {
-	var jFeed feedsJSON
-	var jFeeds []feedsJSON
-	_, span := instrumentation.GetTracer("poller").Start(ctx, "helper.PROCESS_FEEDS", trace.WithSpanKind(trace.SpanKindInternal))
-	defer span.End()
-	span.AddEvent("INTERNAL::processFeeds")
-	for _, v := range feeds.Items {
-		jFeed.Title = v.Title
-		jFeed.Content = v.Content
-		jFeed.Description = v.Description
-		jFeed.Link = v.Link
-		jFeed.Image = v.Image
-		jFeeds = append(jFeeds, jFeed)
-	}
-	return jFeeds
-
-}
-
-func httpSpanError(span trace.Span, method string, logMsg string, httpCode int) trace.Span {
-	log.Error(logMsg)
-	span.RecordError(errors.New(logMsg), trace.WithStackTrace(true))
-	span.SetStatus(http.StatusInternalServerError, logMsg)
-	attributes := spanAttrs{
-		httpCode: attribute.Int("http.status", httpCode),
-		method:   attribute.String("http.method", method),
-	}
-
-	return setSpanAttributes(span, attributes)
 }
