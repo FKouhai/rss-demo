@@ -216,9 +216,27 @@ func NotifyHandler(w http.ResponseWriter, r *http.Request) {
 		method:   attribute.String("http.method", "POST"),
 	}
 
+	if notificationReceiver == "" || notificationService == "" {
+		log.Error("the service is misconfigured, please check the needed envars")
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		log.Error("Wrong method was used")
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
 	feeds, err := ParseRSS(rctx, cfg.RSSFeeds)
 	if err != nil {
 		return
+	}
+
+	// check if globalFeed is set
+	// if not set set it and wait for the next ticker
+	if globalFeed == nil {
+		globalFeed = feeds
 	}
 
 	elementsToNotify := diffie(globalFeed, feeds)
@@ -235,16 +253,30 @@ func NotifyHandler(w http.ResponseWriter, r *http.Request) {
 		Content:    elementsToNotify,
 		WebHookURL: notificationReceiver,
 	}
-	status, err := notify.sendNotification(notificationService)
-	if err != nil {
-		attributes := spanAttrs{
-			httpCode: attribute.Int("http.status", http.StatusInternalServerError),
-			method:   attribute.String("http.method", "POST"),
+
+	newTicker := time.NewTicker(60 * time.Second)
+	done := make(chan bool)
+	go func(dn discordNotification) {
+		for {
+			select {
+			case <-done:
+				newTicker.Stop()
+				return
+			case t := <-newTicker.C:
+				log.InfoFmt("NotifyTicker: tick at %v", t)
+				status, err := dn.sendNotification(notificationService)
+				if err != nil {
+					attributes := spanAttrs{
+						httpCode: attribute.Int("http.status", http.StatusInternalServerError),
+						method:   attribute.String("http.method", "POST"),
+					}
+					span = setSpanAttributes(span, attributes)
+					return
+				}
+				w.WriteHeader(status)
+			}
 		}
-		span = setSpanAttributes(span, attributes)
-		return
-	}
-	w.WriteHeader(status)
+	}(notify)
 
 	span = setSpanAttributes(span, attributes)
 
