@@ -12,7 +12,7 @@ func startMockServerContent() *httptest.Server {
 		w.WriteHeader(http.StatusOK)
 		w.Header().Set("Content-Type", "application/json")
 		// nolint
-		w.Write([]byte(`{"feed_url":"https://mockedurl.com/with/new/article"}`))
+		w.Write([]byte(`{"feed_url":["https://mockedurl.com/with/new/article"]}`))
 	}))
 }
 
@@ -35,11 +35,17 @@ func TestGetContent(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	want := "https://mockedurl.com/with/new/article"
-	if want != got {
-		t.Errorf("got %v , want: %v", got, want)
+	want := []string{"https://mockedurl.com/with/new/article"}
+	wantMap := make(map[string]bool)
+	for _, v := range want {
+		wantMap[v] = true
 	}
+	for _, v := range got {
+		if !wantMap[v] {
+			t.Errorf("got %v , want: %v", got, want)
+		}
 
+	}
 }
 
 func TestGetContentError(t *testing.T) {
@@ -54,12 +60,12 @@ func TestGetContentError(t *testing.T) {
 func TestSendNotification(t *testing.T) {
 	mockServer := mockReceiverEndpoint(http.StatusNoContent)
 
-	// TODO mock discord url where the response should be a 204
 	d := DiscordNotification{
 		WebHookURL: mockServer.URL,
 	}
 
-	resp, err := d.SendNotification("https://www.tomshardware.com/video-games/pc-gaming/signalrgb-takes-a-swipe-at-razer-makes-functioning-rgb-toaster-pc-quad-slice-toaster-case-incorporates-a-stream-deck-mini-itx-components")
+	msg := []string{"https://www.tomshardware.com/video-games/pc-gaming/signalrgb-takes-a-swipe-at-razer-makes-functioning-rgb-toaster-pc-quad-slice-toaster-case-incorporates-a-stream-deck-mini-itx-components"}
+	resp, err := d.SendNotification(msg)
 	if err != nil {
 		t.Error(err)
 	}
@@ -72,8 +78,9 @@ func TestSendNotificationError(t *testing.T) {
 	d := DiscordNotification{
 		WebHookURL: "https://notWorkingUrl.com/",
 	}
+	msg := []string{"https://mockedurl.com/with/new/article"}
 
-	_, err := d.SendNotification("https://mockedurl.com/with/new/article")
+	_, err := d.SendNotification(msg)
 	if err == nil {
 		t.Error("Expected error but got nil")
 	}
