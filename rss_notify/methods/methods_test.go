@@ -13,7 +13,7 @@ import (
 
 func TestPushNotificationHandler(t *testing.T) {
 	mockServer := mockReceiverEndpoint(http.StatusNoContent)
-	data := fmt.Sprintf(`{"feed_url":"https://www.reddit.com/r/sre/comments/1meh785/a_developer_wants_you_to_deploy_their_application/","webhook_url":"%v"}`, mockServer.URL)
+	data := fmt.Sprintf(`{"feed_url":["https://www.reddit.com/r/sre/comments/1meh785/a_developer_wants_you_to_deploy_their_application/"],"webhook_url":"%v"}`, mockServer.URL)
 	payload := []byte(data)
 	requestRecorder := httptest.NewRecorder()
 	req, err := http.NewRequest("POST", "/push", bytes.NewBuffer(payload))
@@ -61,7 +61,7 @@ func TestPushNotificationNoFeed(t *testing.T) {
 }
 
 func TestPushNotificationNoDestination(t *testing.T) {
-	payload := []byte(`{"feed_url":"https://www.reddit.com/r/sre/comments/1meh785/a_developer_wants_you_to_deploy_their_application/","webhook_url":""}`)
+	payload := []byte(`{"feed_url":["https://www.reddit.com/r/sre/comments/1meh785/a_developer_wants_you_to_deploy_their_application/"],"webhook_url":""}`)
 	requestRecorder := httptest.NewRecorder()
 	req, err := http.NewRequest("POST", "/push", bytes.NewBuffer(payload))
 	req.Header.Add("Content-Type", "application/json")
