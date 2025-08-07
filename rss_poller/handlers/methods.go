@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 
@@ -90,7 +91,6 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 	stopPolling()
 	// nolint
 	span = setSpanAttributes(span, attributes)
-	// w.Write([]byte(cfg.RSSFeeds))
 
 	/*
 	 polling mechanism:
@@ -133,6 +133,7 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
+	w.WriteHeader(http.StatusOK)
 }
 
 func stopPolling() {
@@ -201,24 +202,50 @@ func RSSHandler(w http.ResponseWriter, r *http.Request) {
 	span = setSpanAttributes(span, attributes)
 }
 
-// ParseRSS returns the rss feed with all its items
-func ParseRSS(ctx context.Context, feedURL []string) ([]*gofeed.Feed, error) {
-	_, span := instrumentation.GetTracer("poller").Start(ctx, "helper.ParseRSS", trace.WithSpanKind(trace.SpanKindServer))
-	defer span.End()
-	span.AddEvent("PARSING_FEED")
-	feedParser := gofeed.NewParser()
-	var feeds []*gofeed.Feed
-	for _, v := range feedURL {
-		feed, err := feedParser.ParseURL(v)
-		if err != nil {
-			span.AddEvent("FAILED_PROCESS_FEED")
-			span.RecordError(err)
-			log.Debug(err.Error())
-			return nil, err
-		}
-		feeds = append(feeds, feed)
+// NotifyHandler sends the payload to the notification service
+func NotifyHandler(w http.ResponseWriter, r *http.Request) {
+	notificationReceiver := os.Getenv("NOTIFICATION_ENDPOINT")
+	notificationService := os.Getenv("NOTIFICATION_SENDER")
 
+	ctx := r.Context()
+	rctx, span := instrumentation.GetTracer("poller").Start(ctx, "handlers.NotifyHandler", trace.WithSpanKind(trace.SpanKindServer))
+	defer span.End()
+
+	attributes := spanAttrs{
+		httpCode: attribute.Int("http.status", http.StatusOK),
+		method:   attribute.String("http.method", "POST"),
 	}
-	log.Info("got feed")
-	return feeds, nil
+
+	feeds, err := ParseRSS(rctx, cfg.RSSFeeds)
+	if err != nil {
+		return
+	}
+
+	elementsToNotify := diffie(globalFeed, feeds)
+	if elementsToNotify != nil {
+		log.Info("nothing to do here")
+		attributes := spanAttrs{
+			httpCode: attribute.Int("http.status", http.StatusNoContent),
+			method:   attribute.String("http.method", "POST"),
+		}
+		span = setSpanAttributes(span, attributes)
+		return
+	}
+	notify := discordNotification{
+		Content:    elementsToNotify,
+		WebHookURL: notificationReceiver,
+	}
+	status, err := notify.sendNotification(notificationService)
+	if err != nil {
+		attributes := spanAttrs{
+			httpCode: attribute.Int("http.status", http.StatusInternalServerError),
+			method:   attribute.String("http.method", "POST"),
+		}
+		span = setSpanAttributes(span, attributes)
+		return
+	}
+	w.WriteHeader(status)
+
+	span = setSpanAttributes(span, attributes)
+
 }
