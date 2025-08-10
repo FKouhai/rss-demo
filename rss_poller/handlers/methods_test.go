@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 
+	"github.com/mmcdole/gofeed"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace/noop"
 )
@@ -196,4 +199,202 @@ func TestRSSHandlerError(t *testing.T) {
 	if got != want {
 		t.Errorf("want: %v, got :%v", want, got)
 	}
+}
+func TestHandleConfigPayload(t *testing.T) {
+	// Test case 1: Valid request
+	t.Run("ValidRequest", func(t *testing.T) {
+		jsonBody := `{"rss_feeds": ["http://example.com/feed1", "http://example.com/feed2"]}`
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+
+		if err := handleConfigPayload(req); err != nil {
+			t.Fatalf("Expected no error, but got: %v", err)
+		}
+	})
+
+	// Test case 2: Invalid method
+	t.Run("InvalidMethod", func(t *testing.T) {
+		jsonBody := `{"rss_feeds": ["http://example.com/feed1"]}`
+		req := httptest.NewRequest(http.MethodGet, "/", strings.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+
+		if err := handleConfigPayload(req); err == nil {
+			t.Fatal("Expected an error for invalid method, but got none")
+		}
+	})
+
+	// Test case 3: Invalid content type
+	t.Run("InvalidContentType", func(t *testing.T) {
+		jsonBody := `{"rss_feeds": ["http://example.com/feed1"]}`
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "text/plain")
+
+		if err := handleConfigPayload(req); err == nil {
+			t.Fatal("Expected an error for invalid content type, but got none")
+		}
+	})
+
+	// Test case 4: Malformed JSON
+	t.Run("MalformedJSON", func(t *testing.T) {
+		jsonBody := `{rss_feeds: ["http://example.com/feed1"]}`
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+
+		if err := handleConfigPayload(req); err == nil {
+			t.Fatal("Expected an error for malformed JSON, but got none")
+		}
+	})
+}
+
+func TestDiffie(t *testing.T) {
+	// Sample gofeed.Item structs for testing
+	feedItem1 := &gofeed.Item{Link: "http://example.com/post1"}
+	feedItem2 := &gofeed.Item{Link: "http://example.com/post2"}
+	feedItem3 := &gofeed.Item{Link: "http://example.com/post3"}
+
+	// Create a base feed with two items and an extra feed with a new item
+	baseFeeds := []*gofeed.Feed{
+		{
+			Items: []*gofeed.Item{feedItem1, feedItem2},
+		},
+	}
+	extraFeeds := []*gofeed.Feed{
+		{
+			Items: []*gofeed.Item{feedItem1, feedItem2, feedItem3},
+		},
+	}
+
+	// Test case 1: New elements are found
+	t.Run("NewElementsFound", func(t *testing.T) {
+		diff := diffie(baseFeeds, extraFeeds)
+
+		if len(diff) != 1 {
+			t.Fatalf("Expected 1 new element, but got %d", len(diff))
+		}
+		if diff[0] != feedItem3.Link {
+			t.Fatalf("Expected the new link to be %s, but got %s", feedItem3.Link, diff[0])
+		}
+	})
+
+	// Test case 2: No new elements are found
+	t.Run("NoNewElements", func(t *testing.T) {
+		baseFeeds := []*gofeed.Feed{
+			{
+				Items: []*gofeed.Item{feedItem1, feedItem2},
+			},
+		}
+		extraFeeds := []*gofeed.Feed{
+			{
+				Items: []*gofeed.Item{feedItem1, feedItem2},
+			},
+		}
+
+		diff := diffie(baseFeeds, extraFeeds)
+
+		if len(diff) != 0 {
+			t.Fatalf("Expected 0 new elements, but got %d", len(diff))
+		}
+	})
+
+	// Test case 3: Base feed is empty
+	t.Run("EmptyBaseFeed", func(t *testing.T) {
+		var baseFeeds []*gofeed.Feed
+		extraFeeds := []*gofeed.Feed{
+			{
+				Items: []*gofeed.Item{feedItem1, feedItem2},
+			},
+		}
+
+		diff := diffie(baseFeeds, extraFeeds)
+
+		if len(diff) != 2 {
+			t.Fatalf("Expected 2 new elements, but got %d", len(diff))
+		}
+	})
+
+}
+
+func TestSendNotification(t *testing.T) {
+	// Test Case 1: Successful notification with valid content
+	t.Run("ValidContent", func(t *testing.T) {
+		// Set up a mock HTTP server. This server will handle the POST request
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Validate the request sent by sendNotificatio
+			if r.Method != http.MethodPost {
+				t.Errorf("Expected POST method, got %s", r.Method)
+			}
+			if r.Header.Get("Content-Type") != "application/json" {
+				t.Errorf("Expected Content-Type application/json, got %s", r.Header.Get("Content-Type"))
+			}
+
+			// Read and validate the request body
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("Failed to read request body: %v", err)
+			}
+			var receivedData discordNotification
+			if err := json.Unmarshal(body, &receivedData); err != nil {
+				t.Fatalf("Failed to unmarshal request body: %v", err)
+			}
+
+			expectedContent := []string{"http://example.com/new-article"}
+			if len(receivedData.Content) != len(expectedContent) || receivedData.Content[0] != expectedContent[0] {
+				t.Errorf("Received content mismatch. Got %v, expected %v", receivedData.Content, expectedContent)
+			}
+
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Success"))
+		}))
+		defer server.Close() // Make sure the server is closed after the test
+
+		// Create a notification object with valid data
+		d := &discordNotification{
+			Content:    []string{"http://example.com/new-article"},
+			WebHookURL: "http://example.com/webhook",
+		}
+
+		// Call the function under test, using the mock server's URL
+		status, err := d.sendNotification(server.URL)
+
+		// Assert the results
+		if err != nil {
+			t.Fatalf("Expected no error, but got: %v", err)
+		}
+		if status != http.StatusOK {
+			t.Errorf("Expected status %d, but got %d", http.StatusOK, status)
+		}
+	})
+
+	// Test Case 2: No content in the notification
+	t.Run("NoContent", func(t *testing.T) {
+		// This test should not make an HTTP request, so we don't need a mock server
+		d := &discordNotification{Content: nil}
+		status, err := d.sendNotification("http://should-not-be-called.com")
+
+		if err != nil {
+			t.Fatalf("Expected no error, but got: %v", err)
+		}
+		if status != http.StatusNoContent {
+			t.Errorf("Expected status %d, but got %d", http.StatusNoContent, status)
+		}
+	})
+
+	// Test Case 3: Error from the HTTP client
+	t.Run("HTTPClientError", func(t *testing.T) {
+		// Use an invalid URL to simulate a network error
+		d := &discordNotification{
+			Content:    []string{"http://example.com/new-article"},
+			WebHookURL: "http://example.com/webhook",
+		}
+		status, err := d.sendNotification("://invalid-url")
+
+		// We expect an error and a zero status code
+		if err == nil {
+			t.Fatal("Expected an error, but got none")
+		}
+		if status != 0 {
+			t.Errorf("Expected status 0, but got %d", status)
+		}
+	})
+
 }
