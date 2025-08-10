@@ -1,3 +1,4 @@
+// Package methods provides the needed handlerFunc for the notifier service
 package methods
 
 import (

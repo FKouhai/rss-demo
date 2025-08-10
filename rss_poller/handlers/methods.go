@@ -1,13 +1,10 @@
+// Package handlers contains the needed http handlerFunctions and helper functions for the backend logic
 package handlers
 
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"io"
 	"net/http"
-	"os"
-	"strings"
 	"sync"
 
 	"time"
@@ -68,91 +65,6 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 		attribute.String("http.method", "POST"),
 	)
 	w.WriteHeader(http.StatusOK)
-}
-
-// handleConfigPayload validates the HTTP request and unmarshals the JSON payload.
-func handleConfigPayload(r *http.Request) error {
-	if r.Method != http.MethodPost {
-		return errors.New("the wrong method was used")
-	}
-	if r.Header.Get("Content-Type") != "application/json" {
-		return errors.New("the request does not contain a JSON payload")
-	}
-	body, err := io.ReadAll(r.Body)
-	defer r.Body.Close()
-	if err != nil {
-		return err
-	}
-
-	jReader := strings.NewReader(string(body))
-	return json.NewDecoder(jReader).Decode(&cfg)
-}
-
-// pollAndNotify contains the core logic for a single polling cycle.
-func pollAndNotify(t time.Time) {
-	log.InfoFmt("Poller ticker: tick at %v", t)
-
-	// Create a new span for this polling cycle
-	cycleCtx, cycleSpan := instrumentation.GetTracer("poller").Start(
-		context.Background(),
-		"poller.PollAndNotify",
-		trace.WithSpanKind(trace.SpanKindInternal),
-	)
-	defer cycleSpan.End()
-
-	// Fetch the latest feeds
-	newFeeds, err := ParseRSS(cycleCtx, cfg.RSSFeeds)
-	if err != nil {
-		cycleSpan.RecordError(err)
-		return
-	}
-
-	// Find the new items using diffie
-	elementsToNotify := diffie(globalFeed, newFeeds)
-
-	// If there are new items, send a notification
-	if len(elementsToNotify) > 0 {
-		notificationReceiver := os.Getenv("NOTIFICATION_ENDPOINT")
-		notificationService := os.Getenv("NOTIFICATION_SENDER")
-
-		if notificationReceiver == "" || notificationService == "" {
-			log.Error("Notification service is misconfigured, skipping notification.")
-		} else {
-			notify := discordNotification{
-				Content:    elementsToNotify,
-				WebHookURL: notificationReceiver,
-			}
-			if _, err := notify.sendNotification(notificationService); err != nil {
-				log.ErrorFmt("Failed to send notification: %v", err)
-			}
-		}
-	}
-
-	// Safely update the globalFeed with the latest data
-	feedMutex.Lock()
-	globalFeed = newFeeds
-	feedMutex.Unlock()
-}
-
-// startPolling initializes and runs the background poller goroutine.
-func startPolling() {
-	log.Info("Started long poller")
-	ticker = time.NewTicker(30 * time.Second)
-	pollCtx, cancel := context.WithCancel(context.Background())
-	cancelFn = cancel
-
-	go func() {
-		for {
-			select {
-			case <-pollCtx.Done():
-				log.Info("Stopped polling")
-				ticker.Stop()
-				return
-			case t := <-ticker.C:
-				pollAndNotify(t)
-			}
-		}
-	}()
 }
 
 // HealthzHandler is the route that exposes a healthcheck
