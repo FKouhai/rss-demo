@@ -13,8 +13,10 @@ import (
 
 // PushNotificationHandler is the handler that is in charge of sending notification to the destination sourceloggers
 func PushNotificationHandler(w http.ResponseWriter, r *http.Request) {
+	log.Info("connection established")
 	ctx := r.Context()
-	_, span := instrumentation.GetTracer("poller").Start(ctx, "handlers.ConfigHandler", trace.WithSpanKind(trace.SpanKindServer))
+	_, span := instrumentation.GetTracer("notify").Start(ctx, "handlers.PushNotification", trace.WithSpanKind(trace.SpanKindServer))
+	defer span.End()
 
 	if r.Method != "POST" {
 		w.WriteHeader(http.StatusBadRequest)
@@ -24,13 +26,17 @@ func PushNotificationHandler(w http.ResponseWriter, r *http.Request) {
 
 	if r.Header.Get("Content-Type") != "application/json" {
 		w.WriteHeader(http.StatusBadRequest)
+		log.Info("not using json")
+		span.AddEvent("FAILED_TRANSACTION")
 		return
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		span.AddEvent(err.Error())
+		span.AddEvent("FAILED_TRANSACTION")
+		span.RecordError(err)
+		span.SetStatus(http.StatusBadRequest, err.Error())
 		log.Error(err.Error())
 		return
 	}
@@ -38,13 +44,21 @@ func PushNotificationHandler(w http.ResponseWriter, r *http.Request) {
 	var d webhookpush.DiscordNotification
 	message, err := d.GetContent(body)
 	if err != nil {
+		log.Error("fails here")
 		w.WriteHeader(http.StatusBadRequest)
+		span.AddEvent("FAILED_TRANSACTION")
+		span.RecordError(err)
+		span.SetStatus(http.StatusBadRequest, err.Error())
 		log.Error(err.Error())
 		return
 	}
 
 	httpStatus, err := d.SendNotification(message)
 	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		span.AddEvent("FAILED_TRANSACTION")
+		span.RecordError(err)
+		span.SetStatus(http.StatusInternalServerError, err.Error())
 		w.WriteHeader(http.StatusInternalServerError)
 		log.Error(err.Error())
 		return
@@ -57,7 +71,7 @@ func PushNotificationHandler(w http.ResponseWriter, r *http.Request) {
 // HealthzHandler is the route that exposes a healthcheck
 func HealthzHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	_, span := instrumentation.GetTracer("poller").Start(ctx, "handlers.HealthzHandler", trace.WithSpanKind(trace.SpanKindServer))
+	_, span := instrumentation.GetTracer("notify").Start(ctx, "handlers.HealthzHandler", trace.WithSpanKind(trace.SpanKindServer))
 	defer span.End()
 	log.Info("connection to /health established")
 	w.WriteHeader(http.StatusOK)

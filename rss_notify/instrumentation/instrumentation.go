@@ -45,7 +45,7 @@ func InitTracer() (*sdktrace.TracerProvider, error) {
 	resources, err := resource.New(
 		context.Background(),
 		resource.WithAttributes(
-			attribute.String("service.name", "poller"),
+			attribute.String("service.name", "notifier"),
 			attribute.String("library.language", "go"),
 		),
 	)
@@ -65,7 +65,7 @@ func InitTracer() (*sdktrace.TracerProvider, error) {
 				propagation.Baggage{}),
 		)
 
-		tracer = tp.Tracer("poller")
+		tracer = tp.Tracer("notify")
 	})
 
 	return tp, nil

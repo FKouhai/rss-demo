@@ -4,6 +4,7 @@ package webhookpush
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 
 	log "github.com/FKouhai/rss-notify/logger"
@@ -25,13 +26,14 @@ type DiscordNotification struct {
 
 // DiscordMessage is the final message that will get sent to the destination
 type DiscordMessage struct {
-	Content []string `json:"content"`
+	Content string `json:"content"`
 }
 
 // GetContent is the helper function that receives a feed as an input and returns the Data structure
 func (d *DiscordNotification) GetContent(content []byte) ([]string, error) {
 	err := json.Unmarshal(content, &d)
 	if err != nil {
+		log.Info("got error")
 		log.ErrorFmt(err.Error())
 		return nil, err
 	}
@@ -47,25 +49,35 @@ func (d *DiscordNotification) SendNotification(message []string) (int, error) {
 	r := bytes.NewBuffer(m)
 	req, err := http.NewRequest("POST", d.WebHookURL, r)
 	if err != nil {
+		log.Info("Failed to make request")
 		return req.Response.StatusCode, err
 	}
 	req.Header.Add("Content-Type", "application/json")
 	client := &http.Client{}
 	res, err := client.Do(req)
 	if err != nil {
-		return 0, err
+		log.Info("Request was unsuccesful")
+		return http.StatusInternalServerError, err
 	}
 	// nolint
 	defer res.Body.Close()
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		return http.StatusInternalServerError, err
+	}
+	log.InfoFmt("a : %v", string(body))
 	return res.StatusCode, nil
 }
 
 func (d *DiscordNotification) toDiscordMessage(message []string) ([]byte, error) {
-	var dm DiscordMessage
-	dm.Content = message
+	dm := DiscordMessage{
+		Content: message[0],
+	}
+
+	log.InfoFmt("payload: %v", dm.Content)
 	b, err := json.Marshal(&dm)
 	if err != nil {
-		return []byte(""), err
+		return nil, err
 	}
 	return b, nil
 
