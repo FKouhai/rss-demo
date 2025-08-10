@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -46,103 +47,112 @@ var (
 )
 
 // ConfigHandler reads the config sent via json and stores it in memory
+// It also starts a new background poller with the new configuration.
 func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	_, span := instrumentation.GetTracer("poller").Start(ctx, "handlers.ConfigHandler", trace.WithSpanKind(trace.SpanKindServer))
 	defer span.End()
-	attributes := spanAttrs{
-		httpCode: attribute.Int("http.status", http.StatusOK),
-		method:   attribute.String("http.method", "POST"),
-	}
 
 	log.Info("accepted connection")
 
-	if r.Method != http.MethodPost {
+	if err := handleConfigPayload(r); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		// nolint
-		span = httpSpanError(span, r.Method, "the wrong method was used", http.StatusBadRequest)
+		httpSpanError(span, r.Method, err.Error(), http.StatusBadRequest)
 		return
+	}
+
+	startPolling()
+
+	span.SetAttributes(
+		attribute.Int("http.status", http.StatusOK),
+		attribute.String("http.method", "POST"),
+	)
+	w.WriteHeader(http.StatusOK)
+}
+
+// handleConfigPayload validates the HTTP request and unmarshals the JSON payload.
+func handleConfigPayload(r *http.Request) error {
+	if r.Method != http.MethodPost {
+		return errors.New("the wrong method was used")
 	}
 	if r.Header.Get("Content-Type") != "application/json" {
-		w.WriteHeader(http.StatusBadRequest)
-		// nolint
-		span = httpSpanError(span, r.Method, "the request does not contain a JSON payload", http.StatusBadRequest)
-		return
+		return errors.New("the request does not contain a JSON payload")
 	}
 	body, err := io.ReadAll(r.Body)
-	//nolint
 	defer r.Body.Close()
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		//nolint
-		span = httpSpanError(span, r.Method, err.Error(), http.StatusInternalServerError)
-		return
+		return err
 	}
 
 	jReader := strings.NewReader(string(body))
-	err = json.NewDecoder(jReader).Decode(&cfg)
+	return json.NewDecoder(jReader).Decode(&cfg)
+}
+
+// pollAndNotify contains the core logic for a single polling cycle.
+func pollAndNotify(t time.Time) {
+	log.InfoFmt("Poller ticker: tick at %v", t)
+
+	// Create a new span for this polling cycle
+	cycleCtx, cycleSpan := instrumentation.GetTracer("poller").Start(
+		context.Background(),
+		"poller.PollAndNotify",
+		trace.WithSpanKind(trace.SpanKindInternal),
+	)
+	defer cycleSpan.End()
+
+	// Fetch the latest feeds
+	newFeeds, err := ParseRSS(cycleCtx, cfg.RSSFeeds)
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		// nolint
-		span = httpSpanError(span, r.Method, err.Error(), http.StatusBadRequest)
+		cycleSpan.RecordError(err)
 		return
 	}
 
-	stopPolling()
-	// nolint
-	span = setSpanAttributes(span, attributes)
+	// Find the new items using diffie
+	elementsToNotify := diffie(globalFeed, newFeeds)
 
-	/*
-	 polling mechanism:
-	 taking advantage of the time ticker we are able to call every 5 minutes the ParseRSS function
-	*/
-	ticker = time.NewTicker(300 * time.Second)
+	// If there are new items, send a notification
+	if len(elementsToNotify) > 0 {
+		notificationReceiver := os.Getenv("NOTIFICATION_ENDPOINT")
+		notificationService := os.Getenv("NOTIFICATION_SENDER")
+
+		if notificationReceiver == "" || notificationService == "" {
+			log.Error("Notification service is misconfigured, skipping notification.")
+		} else {
+			notify := discordNotification{
+				Content:    elementsToNotify,
+				WebHookURL: notificationReceiver,
+			}
+			if _, err := notify.sendNotification(notificationService); err != nil {
+				log.ErrorFmt("Failed to send notification: %v", err)
+			}
+		}
+	}
+
+	// Safely update the globalFeed with the latest data
+	feedMutex.Lock()
+	globalFeed = newFeeds
+	feedMutex.Unlock()
+}
+
+// startPolling initializes and runs the background poller goroutine.
+func startPolling() {
+	log.Info("Started long poller")
+	ticker = time.NewTicker(30 * time.Second)
 	pollCtx, cancel := context.WithCancel(context.Background())
 	cancelFn = cancel
+
 	go func() {
 		for {
 			select {
 			case <-pollCtx.Done():
-				log.Info("Stoped polling")
+				log.Info("Stopped polling")
 				ticker.Stop()
 				return
 			case t := <-ticker.C:
-				log.Info(t.String())
-				/*
-				 creating a new span so in our tracing tool we do not start to see 1 span every 5 minutes
-				 making the transaction take an infinite amount of time
-				*/
-				pollCtx, pollSpan := instrumentation.GetTracer("poller").Start(
-					context.Background(),
-					"poller.RSSFetchCycle",
-					trace.WithSpanKind(trace.SpanKindInternal),
-				)
-				feeds, err := ParseRSS(pollCtx, cfg.RSSFeeds)
-				if err != nil {
-					// nolint
-					pollSpan = httpSpanError(pollSpan, r.Method, err.Error(), http.StatusInternalServerError)
-					pollSpan.End()
-					return
-				}
-				// updating cached feed safely to prevent race conditions
-				feedMutex.Lock()
-				globalFeed = feeds
-				feedMutex.Unlock()
-				// Once the call to ParseRSS is done we stop our span
-				pollSpan.End()
+				pollAndNotify(t)
 			}
 		}
 	}()
-	w.WriteHeader(http.StatusOK)
-}
-
-func stopPolling() {
-	if cancelFn != nil {
-		cancelFn()
-	}
-	if ticker != nil {
-		ticker.Stop()
-	}
 }
 
 // HealthzHandler is the route that exposes a healthcheck
@@ -200,84 +210,4 @@ func RSSHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	// nolint
 	span = setSpanAttributes(span, attributes)
-}
-
-// NotifyHandler sends the payload to the notification service
-func NotifyHandler(w http.ResponseWriter, r *http.Request) {
-	notificationReceiver := os.Getenv("NOTIFICATION_ENDPOINT")
-	notificationService := os.Getenv("NOTIFICATION_SENDER")
-
-	ctx := r.Context()
-	rctx, span := instrumentation.GetTracer("poller").Start(ctx, "handlers.NotifyHandler", trace.WithSpanKind(trace.SpanKindServer))
-	defer span.End()
-
-	attributes := spanAttrs{
-		httpCode: attribute.Int("http.status", http.StatusOK),
-		method:   attribute.String("http.method", "POST"),
-	}
-
-	if notificationReceiver == "" || notificationService == "" {
-		log.Error("the service is misconfigured, please check the needed envars")
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-
-	if r.Method != http.MethodPost {
-		log.Error("Wrong method was used")
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-
-	feeds, err := ParseRSS(rctx, cfg.RSSFeeds)
-	if err != nil {
-		return
-	}
-
-	// check if globalFeed is set
-	// if not set set it and wait for the next ticker
-	if globalFeed == nil {
-		globalFeed = feeds
-	}
-
-	elementsToNotify := diffie(globalFeed, feeds)
-	if elementsToNotify != nil {
-		log.Info("nothing to do here")
-		attributes := spanAttrs{
-			httpCode: attribute.Int("http.status", http.StatusNoContent),
-			method:   attribute.String("http.method", "POST"),
-		}
-		span = setSpanAttributes(span, attributes)
-		return
-	}
-	notify := discordNotification{
-		Content:    elementsToNotify,
-		WebHookURL: notificationReceiver,
-	}
-
-	newTicker := time.NewTicker(60 * time.Second)
-	done := make(chan bool)
-	go func(dn discordNotification) {
-		for {
-			select {
-			case <-done:
-				newTicker.Stop()
-				return
-			case t := <-newTicker.C:
-				log.InfoFmt("NotifyTicker: tick at %v", t)
-				status, err := dn.sendNotification(notificationService)
-				if err != nil {
-					attributes := spanAttrs{
-						httpCode: attribute.Int("http.status", http.StatusInternalServerError),
-						method:   attribute.String("http.method", "POST"),
-					}
-					span = setSpanAttributes(span, attributes)
-					return
-				}
-				w.WriteHeader(status)
-			}
-		}
-	}(notify)
-
-	span = setSpanAttributes(span, attributes)
-
 }

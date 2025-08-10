@@ -21,10 +21,14 @@ type discordNotification struct {
 }
 
 func (d *discordNotification) sendNotification(dst string) (int, error) {
+	if d.Content == nil {
+		return http.StatusNoContent, nil
+	}
 	dn, err := json.Marshal(&d)
 	if err != nil {
 		return 0, err
 	}
+	log.Info(string(dn))
 	req, err := http.NewRequest("POST", dst, bytes.NewReader(dn))
 	if err != nil {
 		return 0, err
@@ -32,6 +36,7 @@ func (d *discordNotification) sendNotification(dst string) (int, error) {
 	req.Header.Add("Content-Type", "application/json")
 	client := &http.Client{}
 	res, err := client.Do(req)
+	log.InfoFmt("got from notify ep %v", res.StatusCode)
 	if err != nil {
 		return 0, err
 	}
@@ -40,7 +45,7 @@ func (d *discordNotification) sendNotification(dst string) (int, error) {
 	return res.StatusCode, nil
 }
 
-func processFeeds(feeds *gofeed.Feed, ctx context.Context) []feedsJSON {
+func processFeeds(ctx context.Context, feeds *gofeed.Feed) []feedsJSON {
 	var jFeed feedsJSON
 	var jFeeds []feedsJSON
 	_, span := instrumentation.GetTracer("poller").Start(ctx, "helper.PROCESS_FEEDS", trace.WithSpanKind(trace.SpanKindInternal))
@@ -81,7 +86,7 @@ func toJSON(feeds []*gofeed.Feed) ([]byte, error) {
 	span.AddEvent("INTERNAL::toJSON")
 
 	for _, v := range feeds {
-		pFeeds := processFeeds(v, lctx)
+		pFeeds := processFeeds(lctx, v)
 		jFeeds = append(jFeeds, pFeeds...)
 	}
 
@@ -121,17 +126,20 @@ func ParseRSS(ctx context.Context, feedURL []string) ([]*gofeed.Feed, error) {
 func diffie(base []*gofeed.Feed, extra []*gofeed.Feed) []string {
 	var diffs []string
 
-	// create a hashmap to see which values are old
+	// Create a map for O(1) lookups of old item links.
 	isOld := make(map[string]bool)
-	// within that hashmap mark said values as old
-	for _, v := range base {
-		isOld[v.Link] = true
+	for _, feed := range base {
+		for _, item := range feed.Items {
+			isOld[item.Link] = true
+		}
 	}
-	// go over the possible new slice and if it's values are not
-	// part of the old values append that to the new array and return that
-	for _, possibleNewFeed := range extra {
-		if !isOld[possibleNewFeed.Link] {
-			diffs = append(diffs, possibleNewFeed.Link)
+
+	// Iterate through new feeds and find items not in the old map.
+	for _, newFeed := range extra {
+		for _, newItem := range newFeed.Items {
+			if !isOld[newItem.Link] {
+				diffs = append(diffs, newItem.Link)
+			}
 		}
 	}
 
