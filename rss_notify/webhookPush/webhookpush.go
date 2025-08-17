@@ -33,8 +33,7 @@ type DiscordMessage struct {
 func (d *DiscordNotification) GetContent(content []byte) ([]string, error) {
 	err := json.Unmarshal(content, &d)
 	if err != nil {
-		log.Info("got error")
-		log.ErrorFmt(err.Error())
+		log.ErrorFmt("GetContent(): error got %w", err)
 		return nil, err
 	}
 	return d.Content, nil
@@ -49,23 +48,24 @@ func (d *DiscordNotification) SendNotification(message []string) (int, error) {
 	r := bytes.NewBuffer(m)
 	req, err := http.NewRequest("POST", d.WebHookURL, r)
 	if err != nil {
-		log.Info("Failed to make request")
+		log.ErrorFmt("SendNotification(): Failed to make request: %w", err)
 		return req.Response.StatusCode, err
 	}
 	req.Header.Add("Content-Type", "application/json")
 	client := &http.Client{}
 	res, err := client.Do(req)
 	if err != nil {
-		log.Info("Request was unsuccesful")
+		log.ErrorFmt("SendNotification(): Unsuccessful request %w", err)
 		return http.StatusInternalServerError, err
 	}
-	// nolint
-	defer res.Body.Close()
+	defer req.Body.Close()
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
+		log.ErrorFmt("SendNotification(): Error parsing request body %w", err)
 		return http.StatusInternalServerError, err
 	}
-	log.InfoFmt("a : %v", string(body))
+	defer res.Body.Close()
+	log.InfoFmt("SendNotification(): Response %s", string(body))
 	return res.StatusCode, nil
 }
 
@@ -74,9 +74,10 @@ func (d *DiscordNotification) toDiscordMessage(message []string) ([]byte, error)
 		Content: message[0],
 	}
 
-	log.InfoFmt("payload: %v", dm.Content)
+	log.InfoFmt("DiscordMessage: payload %s", dm.Content)
 	b, err := json.Marshal(&dm)
 	if err != nil {
+		log.ErrorFmt("toDiscordMessage(): Error parsing payload %w", err)
 		return nil, err
 	}
 	return b, nil

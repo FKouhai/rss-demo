@@ -8,26 +8,59 @@ package main
 
 import (
 	"context"
+	"net"
 	"net/http"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/FKouhai/rss-notify/instrumentation"
 	log "github.com/FKouhai/rss-notify/logger"
 	"github.com/FKouhai/rss-notify/methods"
 )
 
+const port = 3000
+
 func main() {
-	tp, err := instrumentation.InitTracer()
+	ctx, done := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer done()
+
+	tp, err := instrumentation.InitTracer(ctx)
 	if err != nil {
-		log.Error(err.Error())
+		log.ErrorFmt("[ERROR] Unable to Init Tracer: %w", err)
 	}
-	defer func() {
-		if err := tp.Shutdown(context.Background()); err != nil {
+	defer func(ctx context.Context, cancel context.CancelFunc) {
+		if err := tp.Shutdown(ctx); err != nil {
 			log.Debug(err.Error())
 		}
-	}()
-	http.HandleFunc("/push", methods.PushNotificationHandler)
-	http.HandleFunc("/healthz", methods.HealthzHandler)
-	log.InfoFmt("starting server on port %d", 3000)
-	// nolint
-	http.ListenAndServe(":3000", nil)
+		cancel()
+	}(ctx, done)
+
+	log.InfoFmt("[INFO] Creating server and handler methods", port)
+
+	m := http.NewServeMux()
+	m.HandleFunc("/push", methods.PushNotificationHandler)
+	m.HandleFunc("/healthz", methods.HealthzHandler)
+
+	go func(ctx context.Context, done context.CancelFunc) {
+		serv := &http.Server{
+			Addr:    "0.0.0.0:80",
+			Handler: m,
+			BaseContext: func(l net.Listener) context.Context {
+				ctx = context.WithValue(ctx, "Incoming Address", l.Addr().String())
+				return ctx
+			},
+		}
+		log.InfoFmt("[INFO] Server starting listening on port %d", port)
+		if err := serv.ListenAndServe(); err != http.ErrServerClosed {
+			log.ErrorFmt("[ERROR] Error running server: %w", err)
+		}
+		done()
+	}(ctx, done)
+
+	select {
+	case <-ctx.Done():
+		log.Info("Shutting down...")
+		time.Sleep(1 * time.Second) /* Allow for connections to close */
+	}
 }
