@@ -1,7 +1,8 @@
 ---
-name: "Build and push image to ghcr.io"
+name: "Lint and test PR's"
 on:
   push:
+    pull_request:
     paths: 
      - 'rss_poller/*'
      - 'rss_notify/*'
