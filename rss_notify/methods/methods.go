@@ -3,87 +3,163 @@ package methods
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 
 	"github.com/FKouhai/rss-notify/instrumentation"
 	log "github.com/FKouhai/rss-notify/logger"
 	webhookpush "github.com/FKouhai/rss-notify/webhookPush"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
 
+const ServerAddr = "server address"
+const IncomingAddr = "Incoming address"
+
 // PushNotificationHandler is the handler that is in charge of sending notification to the destination sourceloggers
 func PushNotificationHandler(w http.ResponseWriter, r *http.Request) {
-	log.Info("connection established")
 	ctx := r.Context()
-	_, span := instrumentation.GetTracer("notify").Start(ctx, "handlers.PushNotification", trace.WithSpanKind(trace.SpanKindServer))
+
+	var addr string
+	if ctx.Value(ServerAddr) != nil {
+		addr = ctx.Value(IncomingAddr).(string)
+	}
+	log.InfoFmt(
+		"PushNotificationHandler(): connection established from %s",
+		addr,
+	)
+	_, span := instrumentation.GetTracer("notify").
+		Start(ctx, "handlers.PushNotification",
+			trace.WithSpanKind(trace.SpanKindServer))
 	defer span.End()
+	span.SetAttributes(attribute.KeyValue{
+		Key:   IncomingAddr,
+		Value: attribute.StringValue(addr),
+	})
+
+	var err error = nil
+	var httpStatus int = 200
+	var d webhookpush.DiscordNotification
+	var message = make([]string, 0, 32)
+	var body = make([]byte, 0, 4096)
+
+	w.Header().Set("Content-Type", "application/json")
+	status := map[string]int{"error": -1}
 
 	if r.Method != "POST" {
-		w.WriteHeader(http.StatusBadRequest)
-		log.Error("wrong method was used")
-		return
+		httpStatus = http.StatusBadRequest
+		log.Error("PushNotificationHandler(): wrong method was used")
+		span.RecordError(incorrect_addr)
+		span.SetStatus(http.StatusBadRequest, incorrect_addr.Error())
+		log.ErrorFmt("[ERROR] PushNotificationHandler(): incorrect request method: %w", err)
+		goto notif_end
 	}
 
 	if r.Header.Get("Content-Type") != "application/json" {
-		w.WriteHeader(http.StatusBadRequest)
-		log.Info("not using json")
+		httpStatus = http.StatusBadRequest
+		log.Info("PushNotificationHandler(): content type not json")
 		span.AddEvent("FAILED_TRANSACTION")
-		return
+		span.RecordError(incorrect_type)
+		span.SetStatus(http.StatusBadRequest, incorrect_type.Error())
+		log.ErrorFmt("[ERROR] PushNotificationHandler(): incorrect content-type: %w", err)
+		goto notif_end
 	}
 
-	body, err := io.ReadAll(r.Body)
+	body, err = io.ReadAll(r.Body)
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		span.AddEvent("FAILED_TRANSACTION")
-		span.RecordError(err)
-		span.SetStatus(http.StatusBadRequest, err.Error())
-		log.Error(err.Error())
-		return
-	}
-
-	var d webhookpush.DiscordNotification
-	message, err := d.GetContent(body)
-	if err != nil {
-		log.Error("fails here")
-		w.WriteHeader(http.StatusBadRequest)
+		log.Error("PushNotificationHandler(): error reading request body")
+		httpStatus = http.StatusBadRequest
 		span.AddEvent("FAILED_TRANSACTION")
 		span.RecordError(err)
 		span.SetStatus(http.StatusBadRequest, err.Error())
-		log.Error(err.Error())
-		return
+		log.ErrorFmt("[ERROR] PushNotificationHandler(): failed to parse request body: %w", err)
+		goto notif_end
 	}
 
-	httpStatus, err := d.SendNotification(message)
+	message, err = d.GetContent(body)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		log.Error("PushNotificationHandler(): unable to get bot context")
+		httpStatus = http.StatusBadRequest
+		span.AddEvent("FAILED_TRANSACTION")
+		span.RecordError(err)
+		span.SetStatus(http.StatusBadRequest, err.Error())
+		log.ErrorFmt(
+			"[ERROR] PushNotificationHandler(): failed to get notification content: %w",
+			err,
+		)
+		goto notif_end
+	}
+
+	httpStatus, err = d.SendNotification(message)
+	if err != nil {
+		log.Error("PushNotificationHandler(): unable to send notification message")
+		httpStatus = http.StatusInternalServerError
 		span.AddEvent("FAILED_TRANSACTION")
 		span.RecordError(err)
 		span.SetStatus(http.StatusInternalServerError, err.Error())
-		w.WriteHeader(http.StatusInternalServerError)
-		log.Error(err.Error())
-		return
+		log.ErrorFmt(
+			"[ERROR] PushNotificationHandler(): failed to send notification content: %w",
+			err,
+		)
+		goto notif_end
+	} else {
+		httpStatus = http.StatusNoContent
+		status = map[string]int{"code": httpStatus}
 	}
 
+notif_end:
 	w.WriteHeader(httpStatus)
+	if err := json.NewEncoder(w).Encode(status); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprintf(w, "[ERROR] PushNotificationHandler(): success code %d", httpStatus)
 
+		span.AddEvent("FAILED_TRANSACTION")
+		span.RecordError(err)
+		span.SetStatus(http.StatusInternalServerError, err.Error())
+		log.ErrorFmt(
+			"[ERROR] PushNotificationHandler(): failed to encode response message: %w",
+			err,
+		)
+	} else {
+		span.AddEvent("SUCCESSFUL_TRANSACTION")
+		span.SetStatus(http.StatusCreated, "Push notification handled")
+		log.Info("[INFO] PushNotificationHandler(): handled notification successfully")
+	}
 }
 
 // HealthzHandler is the route that exposes a healthcheck
 func HealthzHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	_, span := instrumentation.GetTracer("notify").Start(ctx, "handlers.HealthzHandler", trace.WithSpanKind(trace.SpanKindServer))
+	_, span := instrumentation.GetTracer("notify").
+		Start(ctx, "handlers.HealthzHandler", trace.WithSpanKind(trace.SpanKindServer))
 	defer span.End()
-	log.Info("connection to /health established")
+	var addr string
+	if ctx.Value(ServerAddr) != nil {
+		addr = ctx.Value(IncomingAddr).(string)
+	}
+	span.SetAttributes(attribute.KeyValue{
+		Key:   IncomingAddr,
+		Value: attribute.StringValue(addr),
+	})
+
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	status := map[string]string{"status": "healthy"}
-	err := json.NewEncoder(w).Encode(status)
-	if err != nil {
+	if err := json.NewEncoder(w).Encode(status); err != nil {
+		log.Error("HealthzHandler(): health check failed")
+		status := map[string]string{"status": "unhealthy"}
+		w.WriteHeader(http.StatusInternalServerError)
+		if err := json.NewEncoder(w).Encode(status); err != nil {
+			log.ErrorFmt("HealthzHandler(): response status encoding failed %w", err)
+		}
 		span.AddEvent("FAILED_TRANSACTION")
 		span.RecordError(err)
 		span.SetStatus(http.StatusInternalServerError, err.Error())
 		log.Error(err.Error())
-		w.WriteHeader(http.StatusInternalServerError)
-		return
+	} else {
+		span.AddEvent("SUCCESSFUL_TRANSACTION")
+		span.SetStatus(http.StatusCreated, "Push notification handled")
+		log.Info("[INFO] HealthzHandler(): successful health check")
 	}
 }

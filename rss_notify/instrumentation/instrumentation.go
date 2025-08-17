@@ -3,6 +3,7 @@ package instrumentation
 
 import (
 	"context"
+	"fmt"
 	"os"
 
 	"sync"
@@ -20,19 +21,21 @@ import (
 
 var tp *sdktrace.TracerProvider
 
-// nolint
 var tracer trace.Tracer
 var once sync.Once
 
 // InitTracer starts the otel tracer
-func InitTracer() (*sdktrace.TracerProvider, error) {
+func InitTracer(ctx context.Context) (*sdktrace.TracerProvider, error) {
 	headers := map[string]string{
-		"content-type": "application/json",
+		"Content-Type": "application/json",
 	}
 	ep := os.Getenv("OTEL_EP")
-	log.Info("using OTEL_EP=" + ep)
+	if ep == "" {
+		return nil, fmt.Errorf("OTEL_EP environment variable not set")
+	}
+	log.InfoFmt("InitTracer() using OTEL_EP=%s", ep)
 	exporter, err := otlptrace.New(
-		context.Background(),
+		ctx,
 		otlptracegrpc.NewClient(
 			otlptracegrpc.WithEndpoint(ep),
 			otlptracegrpc.WithHeaders(headers),
@@ -43,7 +46,7 @@ func InitTracer() (*sdktrace.TracerProvider, error) {
 		return nil, err
 	}
 	resources, err := resource.New(
-		context.Background(),
+		ctx,
 		resource.WithAttributes(
 			attribute.String("service.name", "notifier"),
 			attribute.String("library.language", "go"),

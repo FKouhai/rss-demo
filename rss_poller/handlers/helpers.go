@@ -45,7 +45,7 @@ func (d *discordNotification) sendNotification(dst string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	// nolint
+	// nolint: errcheck
 	defer res.Body.Close()
 	return res.StatusCode, nil
 }
@@ -53,7 +53,8 @@ func (d *discordNotification) sendNotification(dst string) (int, error) {
 func processFeeds(ctx context.Context, feeds *gofeed.Feed) []feedsJSON {
 	var jFeed feedsJSON
 	var jFeeds []feedsJSON
-	_, span := instrumentation.GetTracer("poller").Start(ctx, "helper.PROCESS_FEEDS", trace.WithSpanKind(trace.SpanKindInternal))
+	_, span := instrumentation.GetTracer("poller").
+		Start(ctx, "helper.PROCESS_FEEDS", trace.WithSpanKind(trace.SpanKindInternal))
 	defer span.End()
 	span.AddEvent("INTERNAL::processFeeds")
 	for _, v := range feeds.Items {
@@ -86,7 +87,8 @@ func setSpanAttributes(span trace.Span, attributes spanAttrs) trace.Span {
 
 func toJSON(feeds []*gofeed.Feed) ([]byte, error) {
 	var jFeeds []feedsJSON
-	lctx, span := instrumentation.GetTracer("poller").Start(context.Background(), "helper.toJSON", trace.WithSpanKind(trace.SpanKindInternal))
+	lctx, span := instrumentation.GetTracer("poller").
+		Start(context.Background(), "helper.toJSON", trace.WithSpanKind(trace.SpanKindInternal))
 	defer span.End()
 	span.AddEvent("INTERNAL::toJSON")
 
@@ -106,7 +108,8 @@ func toJSON(feeds []*gofeed.Feed) ([]byte, error) {
 
 // ParseRSS returns the rss feed with all its items
 func ParseRSS(ctx context.Context, feedURL []string) ([]*gofeed.Feed, error) {
-	_, span := instrumentation.GetTracer("poller").Start(ctx, "helper.ParseRSS", trace.WithSpanKind(trace.SpanKindServer))
+	_, span := instrumentation.GetTracer("poller").
+		Start(ctx, "helper.ParseRSS", trace.WithSpanKind(trace.SpanKindServer))
 	defer span.End()
 	span.AddEvent("PARSING_FEED")
 	feedParser := gofeed.NewParser()
@@ -216,16 +219,14 @@ func pollAndNotify(t time.Time) {
 }
 
 // startPolling initializes and runs the background poller goroutine.
-func startPolling() {
+func startPolling(ctx context.Context) {
 	log.Info("Started long poller")
 	ticker = time.NewTicker(30 * time.Second)
-	pollCtx, cancel := context.WithCancel(context.Background())
-	cancelFn = cancel
 
 	go func() {
 		for {
 			select {
-			case <-pollCtx.Done():
+			case <-ctx.Done():
 				log.Info("Stopped polling")
 				ticker.Stop()
 				return
