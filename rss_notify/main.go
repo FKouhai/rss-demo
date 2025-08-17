@@ -47,7 +47,11 @@ func main() {
 			Addr:    "0.0.0.0:80",
 			Handler: m,
 			BaseContext: func(l net.Listener) context.Context {
-				ctx = context.WithValue(ctx, "Incoming Address", l.Addr().String())
+				ctx = context.WithValue(ctx, methods.ServerAddr, l.Addr().String())
+				return ctx
+			},
+			ConnContext: func(ctx context.Context, c net.Conn) context.Context {
+				ctx = context.WithValue(ctx, methods.IncomingAddr, c.LocalAddr().String())
 				return ctx
 			},
 		}

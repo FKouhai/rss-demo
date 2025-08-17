@@ -4,8 +4,6 @@ import (
 	"context"
 	"os"
 	"testing"
-
-	"github.com/gostaticanalysis/nilerr"
 )
 
 func TestGetTracer(t *testing.T) {
@@ -16,7 +14,7 @@ func TestGetTracer(t *testing.T) {
 }
 
 func TestInitNoError(t *testing.T) {
-	if os.Setenv("OTEL_EP", "testingotel12:443"); err != nil {
+	if err := os.Setenv("OTEL_EP", "testingotel12:443"); err != nil {
 		t.Errorf("Expected OTEL_EP environment variable set")
 	}
 	_, err := InitTracer(context.Background())

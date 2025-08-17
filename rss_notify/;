@@ -21,13 +21,9 @@ const IncomingAddr = "Incoming address"
 func PushNotificationHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	var addr string
-	if ctx.Value(ServerAddr) != nil {
-		addr = ctx.Value(IncomingAddr).(string)
-	}
 	log.InfoFmt(
 		"PushNotificationHandler(): connection established from %s",
-		addr,
+		ctx.Value(IncomingAddr).(string),
 	)
 	_, span := instrumentation.GetTracer("notify").
 		Start(ctx, "handlers.PushNotification",
@@ -35,7 +31,7 @@ func PushNotificationHandler(w http.ResponseWriter, r *http.Request) {
 	defer span.End()
 	span.SetAttributes(attribute.KeyValue{
 		Key:   IncomingAddr,
-		Value: attribute.StringValue(addr),
+		Value: attribute.StringValue(ctx.Value(IncomingAddr).(string)),
 	})
 
 	var err error = nil
@@ -134,13 +130,9 @@ func HealthzHandler(w http.ResponseWriter, r *http.Request) {
 	_, span := instrumentation.GetTracer("notify").
 		Start(ctx, "handlers.HealthzHandler", trace.WithSpanKind(trace.SpanKindServer))
 	defer span.End()
-	var addr string
-	if ctx.Value(ServerAddr) != nil {
-		addr = ctx.Value(IncomingAddr).(string)
-	}
 	span.SetAttributes(attribute.KeyValue{
 		Key:   IncomingAddr,
-		Value: attribute.StringValue(addr),
+		Value: attribute.StringValue(ctx.Value(ServerAddr)),
 	})
 
 	w.Header().Set("Content-Type", "application/json")
