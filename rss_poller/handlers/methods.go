@@ -16,6 +16,9 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+const ServerAddr = "server address"
+const IncomingAddr = "Incoming address"
+
 // ConfigStruct contains the accepted config fields that this microservice will use
 type ConfigStruct struct {
 	RSSFeeds []string `json:"rss_feeds"`
@@ -47,10 +50,23 @@ var (
 // It also starts a new background poller with the new configuration.
 func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	_, span := instrumentation.GetTracer("poller").Start(ctx, "handlers.ConfigHandler", trace.WithSpanKind(trace.SpanKindServer))
+	_, span := instrumentation.GetTracer("poller").
+		Start(ctx, "handlers.ConfigHandler", trace.WithSpanKind(trace.SpanKindServer))
 	defer span.End()
 
-	log.Info("accepted connection")
+	var addr string
+	if ctx.Value(ServerAddr) != nil {
+		addr = ctx.Value(IncomingAddr).(string)
+	}
+	span.SetAttributes(attribute.KeyValue{
+		Key:   IncomingAddr,
+		Value: attribute.StringValue(addr),
+	})
+
+	log.InfoFmt(
+		"ConfigHandler(): connection established from %s",
+		addr,
+	)
 
 	if err := handleConfigPayload(r); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -58,7 +74,7 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	startPolling()
+	startPolling(ctx)
 
 	span.SetAttributes(
 		attribute.Int("http.status", http.StatusOK),
@@ -70,37 +86,65 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 // HealthzHandler is the route that exposes a healthcheck
 func HealthzHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	_, span := instrumentation.GetTracer("poller").Start(ctx, "handlers.HealthzHandler", trace.WithSpanKind(trace.SpanKindServer))
+	_, span := instrumentation.GetTracer("notify").
+		Start(ctx, "handlers.HealthzHandler", trace.WithSpanKind(trace.SpanKindServer))
 	defer span.End()
-	log.Info("connection to /health established")
+	var addr string
+	if ctx.Value(ServerAddr) != nil {
+		addr = ctx.Value(IncomingAddr).(string)
+	}
+	span.SetAttributes(attribute.KeyValue{
+		Key:   IncomingAddr,
+		Value: attribute.StringValue(addr),
+	})
+
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	status := map[string]string{"status": "healthy"}
-	err := json.NewEncoder(w).Encode(status)
-	if err != nil {
+	if err := json.NewEncoder(w).Encode(status); err != nil {
+		log.Error("HealthzHandler(): health check failed")
+		status := map[string]string{"status": "unhealthy"}
+		w.WriteHeader(http.StatusInternalServerError)
+		if err := json.NewEncoder(w).Encode(status); err != nil {
+			log.ErrorFmt("HealthzHandler(): response status encoding failed %w", err)
+		}
 		span.AddEvent("FAILED_TRANSACTION")
 		span.RecordError(err)
 		span.SetStatus(http.StatusInternalServerError, err.Error())
 		log.Error(err.Error())
-		w.WriteHeader(http.StatusInternalServerError)
-		return
+	} else {
+		span.AddEvent("SUCCESSFUL_TRANSACTION")
+		span.SetStatus(http.StatusCreated, "Push notification handled")
+		log.Info("[INFO] HealthzHandler(): successful health check")
 	}
 }
 
 // RSSHandler is the route that exposes the rss feeds that have been polled
 func RSSHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	rctx, span := instrumentation.GetTracer("poller").Start(ctx, "handlers.RSSHandler", trace.WithSpanKind(trace.SpanKindServer))
+	rctx, span := instrumentation.GetTracer("poller").
+		Start(ctx, "handlers.RSSHandler", trace.WithSpanKind(trace.SpanKindServer))
 	defer span.End()
+
+	var addr string
+	if ctx.Value(ServerAddr) != nil {
+		addr = ctx.Value(IncomingAddr).(string)
+	}
+	span.SetAttributes(attribute.KeyValue{
+		Key:   IncomingAddr,
+		Value: attribute.StringValue(addr),
+	})
+
 	feeds := globalFeed
 	attributes := spanAttrs{
 		httpCode: attribute.Int("http.status", http.StatusOK),
 		method:   attribute.String("http.method", "GET"),
 	}
-	log.Info("connection to /rss established")
+	log.Info("RSSHandler(): connection to /rss established")
 	// checks if feeds have already been set, otherwise call ParseRSS and set the feeds locally
 	// used as a sanity check to prevent possible race conditions
 	if feeds == nil {
-		log.Info("got null feeds")
+		log.Info("RSSHandler(): got null feeds")
 		var err error
 		feeds, err = ParseRSS(rctx, cfg.RSSFeeds)
 		if err != nil {
