@@ -39,7 +39,8 @@ var (
 	cfg        ConfigStruct
 	feedMutex  sync.RWMutex
 	// Store ticker and cancel func for cleanup
-	ticker   *time.Ticker
+	ticker *time.Ticker
+	// nolint
 	cancelFn context.CancelFunc
 )
 
