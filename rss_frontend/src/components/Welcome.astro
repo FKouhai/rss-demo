@@ -1,9 +1,31 @@
 ---
 import astroLogo from '../assets/astro.svg';
 import background from '../assets/background.svg';
+import '../styles/global.css';
+import { ModeToggle } from '@/components/ModeToggle';
 import Feeds from './Feeds.tsx';
-const pollerEndpoint = import.meta.env.POLLER_ENDPOINT;
+const pollerEndpoint = process.env.POLLER_ENDPOINT;
 ---
+<script>console.log("starting the server")</script>
+<script>console.log("this is my poller endpoint ->", process.env.POLLER_ENDPOINT)</script>
+<script is:inline>
+	const getThemePreference = () => {
+		if (typeof localStorage !== 'undefined' && localStorage.getItem('theme')) {
+			return localStorage.getItem('theme');
+		}
+		return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+	};
+	const isDark = getThemePreference() === 'dark';
+	document.documentElement.classList[isDark ? 'add' : 'remove']('dark');
+ 
+	if (typeof localStorage !== 'undefined') {
+		const observer = new MutationObserver(() => {
+			const isDark = document.documentElement.classList.contains('dark');
+			localStorage.setItem('theme', isDark ? 'dark' : 'light');
+		});
+		observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+	}
+</script>
 
 <div id="container">
 	<img id="background" src={background.src} alt="" fetchpriority="high" />
@@ -12,6 +34,7 @@ const pollerEndpoint = import.meta.env.POLLER_ENDPOINT;
 			<a href="https://astro.build"
 				><img src={astroLogo.src} width="115" height="48" alt="Astro Homepage" /></a
 			>
+       <ModeToggle client:load />
       <Feeds pollerEndpoint={pollerEndpoint} client:load/>
 			</section>
 		</section>
@@ -19,6 +42,7 @@ const pollerEndpoint = import.meta.env.POLLER_ENDPOINT;
 
 </div>
 <style>
+
 /* feeds.css */
 
 .feeds-container {
@@ -211,7 +235,7 @@ const pollerEndpoint = import.meta.env.POLLER_ENDPOINT;
 		}
 	}
 
-	@media screen and (max-width: 768px) {
+	@media screen and (max-width: 720px) {
 		#container {
 			display: flex;
 			flex-direction: column;
