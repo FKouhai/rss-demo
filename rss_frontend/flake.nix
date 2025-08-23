@@ -36,8 +36,19 @@
           pname = "frontend";
           version = "0.1.0";
           src = ./.;
-          npmDepsHash = "sha256-QxGqtIcanIFKJmn5ZJXCl7q8AGbObKtTqgZS7BzthJc=";
+          npmDepsHash = "sha256-SlPirQTAKN+6n8MqLNTpibgCR79hnAlDTKGnOWoE3jk=";
           NODE_OPTIONS = "--openssl-legacy-provider";
+          buildPhase = ''
+            runHook preBuild
+            npm run build
+            runHook postBuild
+          '';
+          installPhase = ''
+            mkdir -p $out/dist
+            cp -r dist/* $out/dist
+            mkdir -p $out/node_modules
+            cp -r node_modules/* $out/node_modules
+          '';
         });
         dockerImage = pkgs.dockerTools.buildLayeredImage {
           name = "frontend";
@@ -45,11 +56,12 @@
           created = "now";
           contents = [
             pkgs.nodejs
+            frontend
           ];
           config = {
             Cmd = [
               "${pkgs.nodejs}/bin/node"
-              "${frontend}/lib/node_modules/rss_frontend/dist/server/entry.mjs"
+              "${frontend}/dist/server/entry.mjs"
             ];
           };
         };
