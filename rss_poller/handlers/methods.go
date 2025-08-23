@@ -89,6 +89,9 @@ func HealthzHandler(w http.ResponseWriter, r *http.Request) {
 // RSSHandler is the route that exposes the rss feeds that have been polled
 func RSSHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:4321")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 	rctx, span := instrumentation.GetTracer("poller").Start(ctx, "handlers.RSSHandler", trace.WithSpanKind(trace.SpanKindServer))
 	defer span.End()
 	feeds := globalFeed
