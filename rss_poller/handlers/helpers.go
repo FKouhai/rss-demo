@@ -45,7 +45,7 @@ func (d *discordNotification) sendNotification(dst string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	// nolint
+	// nolint: errcheck
 	defer res.Body.Close()
 	return res.StatusCode, nil
 }
