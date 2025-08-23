@@ -6,31 +6,18 @@ import {
   CardAction,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-
-interface RssObject {
-  title: string;
-  content: string;
-  link: string;
-}
-
-interface FeedsProps {
-  pollerEndpoint: string;
-}
-
-const ITEMS_PER_PAGE = 9; // Set the number of items you want per page
-
-const Feeds: FunctionalComponent<FeedsProps> = ({ pollerEndpoint }) => {
-  const [data, setData] = useState<RssObject[]>([]);
+const Feeds = ({ pollerEndpoint }) => {
+  const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState(null);
   const [page, setPage] = useState(1);
-  const [expandedItems, setExpandedItems] = useState<{ [key: number]: boolean }>({});
+  const [expandedItems, setExpandedItems] = useState({});
+  const ITEMS_PER_PAGE = 9;
 
-  const truncateHtml = (html: string, maxLength: number) => {
+  const truncateHtml = (html, maxLength) => {
     const plainText = html.replace(/<[^>]*>?/gm, '');
     if (plainText.length <= maxLength) {
       return html;
@@ -41,8 +28,10 @@ const Feeds: FunctionalComponent<FeedsProps> = ({ pollerEndpoint }) => {
 
   useEffect(() => {
     const fetchData = async () => {
+      setLoading(true);
+      setError(null);
+      
       if (!pollerEndpoint) {
-        console.error('The pollerEndpoint prop is not set.');
         setError('Service endpoint not configured.');
         setLoading(false);
         return;
@@ -55,8 +44,8 @@ const Feeds: FunctionalComponent<FeedsProps> = ({ pollerEndpoint }) => {
         }
         const jsonData = await response.json();
         setData(jsonData);
-      } catch (err: any) {
-        setError(err.message);
+      } catch (err) {
+        setError("Failed to fetch data.");
       } finally {
         setLoading(false);
       }
@@ -79,49 +68,50 @@ const Feeds: FunctionalComponent<FeedsProps> = ({ pollerEndpoint }) => {
 
   const hasMorePages = endIndex < data.length;
 
-  if (loading) return <div>Loading...</div>;
-  if (error) return <div>Error: {error}</div>;
+  if (loading) return <div className="p-4 text-center text-lg">Loading...</div>;
+  if (error) return <div className="p-4 text-center text-red-500">Error: {error}</div>;
 
   return (
-    <div className="feeds-container">
+    <div className="p-4 min-h-screen bg-gray-50 flex flex-col justify-between">
+      <div className="container mx-auto">
+        <h1 className="text-3xl md:text-4xl font-bold text-center mb-8">Latest Feeds</h1>
+        <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-3 gap-6">
+          {paginatedData.map((item, index) => {
+            const isExpanded = expandedItems[index] || false;
+            const content = item.content;
+            const isLongContent = content.length > 300;
+            const displayContent = isLongContent && !isExpanded ? truncateHtml(content, 300) : content;
 
-      <div className="feeds-grid">
-        {paginatedData.map((item, index) => {
-          const isExpanded = expandedItems[index] || false;
-          const content = item.content;
-          const isLongContent = content.length > 200;
-          const displayContent = isLongContent && !isExpanded ? truncateHtml(content, 200) : content;
-
-          return (
-            <div key={index} className="feeds-item-box">
-              <Card>
-              <CardHeader>
-                <CardTitle>{item.title}</CardTitle>
-                <CardDescription></CardDescription>
-                <CardAction><a href={item.link}>View the Original Post</a></CardAction>
-              </CardHeader>
-              <CardContent>
-              <div
-                className="feeds-content"
-                dangerouslySetInnerHTML={{ __html: displayContent }}
-              />
-              </CardContent>
-            </Card>
-              {isLongContent && (
-                <Button
-                  className="read-more-btn"
-                  onClick={() => setExpandedItems({ ...expandedItems, [index]: !isExpanded })}
-                >
-                  {isExpanded ? 'Read Less' : 'Read More'}
-                </Button>
-              )}
-            </div>
-          );
-        })}
+            return (
+              <Card key={index} className="flex flex-col">
+                <CardHeader>
+                  <CardTitle>{item.title}</CardTitle>
+                  <CardDescription>
+                    <a href={item.link} className="text-blue-500 hover:text-blue-700 text-sm">View Original Post</a>
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="flex-grow">
+                  <div
+                    className="feeds-content text-sm text-gray-600 mb-9"
+                    dangerouslySetInnerHTML={{ __html: displayContent }}
+                  />
+                  {isLongContent && (
+                    <Button
+                      onClick={() => setExpandedItems({ ...expandedItems, [index]: !isExpanded })}
+                      className="mt-4"
+                    >
+                      {isExpanded ? 'Read Less' : 'Read More'}
+                    </Button>
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
       </div>
-      <div className="pagination">
+      <div className="container mx-auto mt-8 flex justify-center items-center space-x-4">
         <Button onClick={handlePrevPage} disabled={page === 1}>Previous</Button>
-        <span>Page {page}</span>
+        <span className="text-gray-700">Page {page}</span>
         <Button onClick={handleNextPage} disabled={!hasMorePages}>Next</Button>
       </div>
     </div>
