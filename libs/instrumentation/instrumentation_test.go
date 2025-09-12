@@ -15,7 +15,7 @@ func TestGetTracer(t *testing.T) {
 func TestInitNoError(t *testing.T) {
 	// nolint
 	os.Setenv("OTEL_EP", "testingotel12:443")
-	_, err := InitTracer()
+	_, err := InitTracer("test-stub")
 	if err != nil {
 		t.Errorf("Expected no error but got %v", err)
 	}
