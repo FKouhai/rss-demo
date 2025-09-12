@@ -6,8 +6,8 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/FKouhai/rss-notify/instrumentation"
-	log "github.com/FKouhai/rss-notify/logger"
+	"github.com/FKouhai/rss-demo/libs/instrumentation"
+	log "github.com/FKouhai/rss-demo/libs/logger"
 	webhookpush "github.com/FKouhai/rss-notify/webhookPush"
 	"go.opentelemetry.io/otel/trace"
 )

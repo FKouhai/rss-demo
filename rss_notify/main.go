@@ -10,13 +10,13 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/FKouhai/rss-notify/instrumentation"
-	log "github.com/FKouhai/rss-notify/logger"
+	"github.com/FKouhai/rss-demo/libs/instrumentation"
+	log "github.com/FKouhai/rss-demo/libs/logger"
 	"github.com/FKouhai/rss-notify/methods"
 )
 
 func main() {
-	tp, err := instrumentation.InitTracer()
+	tp, err := instrumentation.InitTracer("notify")
 	if err != nil {
 		log.Error(err.Error())
 	}

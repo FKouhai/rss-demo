@@ -7,7 +7,7 @@ import (
 	"io"
 	"net/http"
 
-	log "github.com/FKouhai/rss-notify/logger"
+	log "github.com/FKouhai/rss-demo/libs/logger"
 )
 
 // PushMessage interface contains the function contracts that are required to be compliant with while sending a notification
