@@ -4,13 +4,13 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/FKouhai/rss-demo/libs/instrumentation"
+	log "github.com/FKouhai/rss-demo/libs/logger"
 	"github.com/FKouhai/rss-poller/handlers"
-	"github.com/FKouhai/rss-poller/instrumentation"
-	log "github.com/FKouhai/rss-poller/logger"
 )
 
 func main() {
-	tp, err := instrumentation.InitTracer()
+	tp, err := instrumentation.InitTracer("poller")
 	if err != nil {
 		log.Error(err.Error())
 	}

@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/FKouhai/rss-poller/instrumentation"
-	log "github.com/FKouhai/rss-poller/logger"
+	"github.com/FKouhai/rss-demo/libs/instrumentation"
+	log "github.com/FKouhai/rss-demo/libs/logger"
 	"github.com/mmcdole/gofeed"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"

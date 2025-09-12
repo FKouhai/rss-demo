@@ -19,6 +19,6 @@ buildGoModule (finalAttrs: {
   pwd = ./.;
   src = ./.;
   modules = ./gomod2nix.toml;
-  vendorHash = "sha256-lDu3FfBciJ+zQIkcP1A7S74j9Qu9zzJSGkNFpoIYxWU=";
+  vendorHash = "sha256-BX4ffpAnpvubHelNm5pmcM6oDAldbR5eycZKTfsh7Sw=";
   doCheck = false;
 })
