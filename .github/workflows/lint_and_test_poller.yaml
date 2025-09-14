@@ -1,11 +1,10 @@
 ---
-name: "Lint and test PR's"
+name: "Lint and test PR's for poller"
 on:
   push:
     pull_request:
     paths: 
      - 'rss_poller/*'
-     - 'rss_notify/*'
 jobs:
   build:
     strategy:
@@ -28,7 +27,4 @@ jobs:
           extra_nix_config: |
             sandbox = false
       - run: |
-          for d in $(git diff --name-only $COMMIT_ID | awk -F'/' 'NF!=1{print $1}' | sort -u)
-          do
-            cd $d && nix flake check --option sandbox false
-          done
+            cd rss_poller && nix flake check --option sandbox false
