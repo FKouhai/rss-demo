@@ -164,6 +164,7 @@ func handleConfigPayload(r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	log.Info(string(body))
 
 	jReader := strings.NewReader(string(body))
 	return json.NewDecoder(jReader).Decode(&cfg)
