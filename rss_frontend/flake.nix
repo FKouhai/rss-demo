@@ -51,7 +51,7 @@
           '';
         });
         dockerImage = pkgs.dockerTools.buildLayeredImage {
-          name = "frontend";
+          name = "rss_frontend";
           tag = "latest";
           created = "now";
           contents = [
