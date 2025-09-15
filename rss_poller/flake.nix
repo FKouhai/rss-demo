@@ -66,7 +66,7 @@
 
         # build for container image
         dockerImage = pkgs.dockerTools.buildLayeredImage {
-          name = "rss-poller";
+          name = "rss_poller";
           tag = "latest";
           created = "now";
           contents = [

@@ -63,7 +63,7 @@
         };
 
         dockerImage = pkgs.dockerTools.buildLayeredImage {
-          name = "rss-notify";
+          name = "rss_notify";
           tag = "latest";
           created = "now";
           contents = [

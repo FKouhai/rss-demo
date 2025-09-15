@@ -33,7 +33,7 @@
           '';
         };
         frontend = pkgs.buildNpmPackage (finalAttrs: {
-          pname = "frontend";
+          pname = "rss_frontend";
           version = "0.1.0";
           src = ./.;
           npmDepsHash = "sha256-SlPirQTAKN+6n8MqLNTpibgCR79hnAlDTKGnOWoE3jk=";
