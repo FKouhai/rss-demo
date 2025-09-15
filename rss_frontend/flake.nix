@@ -65,6 +65,7 @@
               "${pkgs.nodejs}/bin/node"
               "${frontend}/dist/server/entry.mjs"
             ];
+            Env = [ "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt" ];
           };
         };
       in
