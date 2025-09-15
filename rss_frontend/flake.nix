@@ -56,6 +56,8 @@
           created = "now";
           contents = [
             pkgs.nodejs
+            pkgs.cacert
+            pkgs.openssl
             frontend
           ];
           config = {
