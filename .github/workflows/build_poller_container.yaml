@@ -48,4 +48,4 @@ jobs:
           docker image load --input result
           docker image tag rss_poller:latest ${{ env.REGISTRY }}/fkouhai/rss_poller-${{ matrix.system }}:${{ github.ref_name }}
           docker image ls
-          docker push ${{ env.REGISTRY }}/fkouhai/rss-demo/rss_poller-${{ matrix.system }}:${{ github.ref_name }}
+          docker push ${{ env.REGISTRY }}/fkouhai/rss_poller-${{ matrix.system }}:${{ github.ref_name }}
