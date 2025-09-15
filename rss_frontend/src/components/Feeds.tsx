@@ -1,5 +1,5 @@
-import type { FunctionalComponent } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+// src/components/Feeds.jsx
+import { useState } from 'preact/hooks';
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -8,11 +8,12 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card"
-const Feeds = ({ pollerEndpoint }) => {
-  const [data, setData] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+} from "@/components/ui/card";
+
+// Accept initial data and error as props from Astro
+const Feeds = ({ data: initialData, error: initialError }) => {
+  const [data] = useState(initialData);
+  const [error] = useState(initialError);
   const [page, setPage] = useState(1);
   const [expandedItems, setExpandedItems] = useState({});
   const ITEMS_PER_PAGE = 9;
@@ -25,34 +26,6 @@ const Feeds = ({ pollerEndpoint }) => {
     const truncatedText = plainText.substring(0, maxLength);
     return `${truncatedText}...`;
   };
-
-  useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
-      setError(null);
-      
-      if (!pollerEndpoint) {
-        setError('Service endpoint not configured.');
-        setLoading(false);
-        return;
-      }
-
-      try {
-        const response = await fetch(pollerEndpoint);
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        const jsonData = await response.json();
-        setData(jsonData);
-      } catch (err) {
-        setError("Failed to fetch data.");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchData();
-  }, [pollerEndpoint]);
 
   const handleNextPage = () => {
     setPage(prevPage => prevPage + 1);
@@ -68,7 +41,7 @@ const Feeds = ({ pollerEndpoint }) => {
 
   const hasMorePages = endIndex < data.length;
 
-  if (loading) return <div className="p-4 text-center text-lg">Loading...</div>;
+  // Use the error passed from the server
   if (error) return <div className="p-4 text-center text-red-500">Error: {error}</div>;
 
   return (
