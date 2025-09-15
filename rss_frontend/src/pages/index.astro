@@ -2,7 +2,7 @@
 import astroLogo from '../assets/astro.svg';
 import background from '../assets/background.svg';
 import '../styles/global.css';
-import { ModeToggle } from '@/components/ModeToggle';
+import { ModeToggle } from '../components/ModeToggle';
 import Feeds from '../components/Feeds.tsx';
 
 // Server-side data fetching
@@ -24,7 +24,6 @@ try {
 ---
 
 <script>console.log("starting the server")</script>
-<script>console.log("this is my poller endpoint ->", import.meta.env.POLLER_ENDPOINT)</script>
 <script is:inline>
 	const getThemePreference = () => {
 		if (typeof localStorage !== 'undefined' && localStorage.getItem('theme')) {
