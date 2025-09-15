@@ -31,13 +31,10 @@ const pollerEndpoint = process.env.POLLER_ENDPOINT;
 	<img id="background" src={background.src} alt="" fetchpriority="high" />
 	<main>
 		<section id="hero">
-			<a href="https://astro.build"
-				><img src={astroLogo.src} width="115" height="48" alt="Astro Homepage" /></a
-			>
+			<a href="https://astro.build"><img src={astroLogo.src} width="115" height="48" alt="Astro Homepage" /></a>
        <ModeToggle client:load />
       <Feeds pollerEndpoint={pollerEndpoint} client:load/>
 			</section>
-		</section>
 	</main>
 
 </div>
@@ -111,7 +108,7 @@ const pollerEndpoint = process.env.POLLER_ENDPOINT;
 	}
 
 	#container {
-		font-family: Inter, Roboto, 'Helvetica Neue', 'Arial Nova', 'Nimbus Sans', Arial, sans-serif;
+		font-family: 'Helvetica Neue', 'Arial Nova', 'Nimbus Sans';
 		height: 100%;
 	}
 
