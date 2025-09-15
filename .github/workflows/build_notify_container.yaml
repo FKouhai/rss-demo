@@ -1,5 +1,5 @@
 ---
-name: "build notify"
+name: "build notify container"
 on:
   push:
     tags:
@@ -46,6 +46,6 @@ jobs:
           cd rss_notify
           nix build --option sandbox true .#dockerImage.${{ matrix.system }}
           docker image load --input result
-          docker image tag rss_notify:latest ${{ env.REGISTRY }}/fkouhai/shorturl-${{ matrix.system }}:${{ github.ref_name }}
+          docker image tag rss_notify:latest ${{ env.REGISTRY }}/fkouhai/rss_notify-${{ matrix.system }}:${{ github.ref_name }}
           docker image ls
           docker push ${{ env.REGISTRY }}/fkouhai/rss_notify-${{ matrix.system }}:${{ github.ref_name }}

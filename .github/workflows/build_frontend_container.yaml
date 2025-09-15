@@ -1,5 +1,5 @@
 ---
-name: "build frontend"
+name: "build frontend container"
 on:
   push:
     tags:
@@ -46,6 +46,6 @@ jobs:
           cd rss_frontend
           nix build --option sandbox true .#dockerImage.${{ matrix.system }}
           docker image load --input result
-          docker image tag rss_frontend:latest ${{ env.REGISTRY }}/fkouhai/shorturl-${{ matrix.system }}:${{ github.ref_name }}
+          docker image tag rss_frontend:latest ${{ env.REGISTRY }}/fkouhai/rss_frontend-${{ matrix.system }}:${{ github.ref_name }}
           docker image ls
           docker push ${{ env.REGISTRY }}/fkouhai/rss_frontend-${{ matrix.system }}:${{ github.ref_name }}
