@@ -29,5 +29,5 @@ func main() {
 	http.HandleFunc("/healthz", methods.HealthzHandler)
 	log.InfoFmt("starting server on port %d", 3001)
 	// nolint
-	http.ListenAndServe(":3001", nil)
+	http.ListenAndServe(":3000", nil)
 }
