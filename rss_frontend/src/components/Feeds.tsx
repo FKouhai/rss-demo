@@ -12,7 +12,8 @@ import {
 
 // Accept initial data and error as props from Astro
 const Feeds = ({ data: initialData, error: initialError }) => {
-  const [data] = useState(initialData);
+  // Use a defensive check to ensure data is always an array
+  const [data] = useState(Array.isArray(initialData) ? initialData : []);
   const [error] = useState(initialError);
   const [page, setPage] = useState(1);
   const [expandedItems, setExpandedItems] = useState({});
