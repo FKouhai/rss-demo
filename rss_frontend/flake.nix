@@ -36,7 +36,7 @@
           pname = "rss_frontend";
           version = "0.1.0";
           src = ./.;
-          npmDepsHash = "sha256-SlPirQTAKN+6n8MqLNTpibgCR79hnAlDTKGnOWoE3jk=";
+          npmDepsHash = "sha256-bNJ8ExoG2d/vuoC39UZKptrvEORaRGbpEi/rry06qv4=";
           NODE_OPTIONS = "--openssl-legacy-provider";
           buildPhase = ''
             runHook preBuild
