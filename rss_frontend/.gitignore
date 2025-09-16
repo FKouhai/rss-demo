@@ -1,6 +1,7 @@
 # build output
 result
 .direnv
+dist
 
 # Local fonts
 fonts/
