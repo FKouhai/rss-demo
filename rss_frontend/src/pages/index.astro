@@ -6,20 +6,24 @@ import { ModeToggle } from '../components/ModeToggle';
 import Feeds from '../components/Feeds.tsx';
 
 // Server-side data fetching
-// Use a more robust way to get the endpoint, like an environment variable
-const pollerEndpoint = import.meta.env.POLLER_ENDPOINT || 'https://your-api-endpoint.com/data';
+// Use environment variable for the poller endpoint
+const pollerEndpoint = import.meta.env.POLLER_ENDPOINT || 'http://localhost:3000/rss';
 let initialData = [];
-let error = null;
+let error;
 
 try {
-  const response = await fetch(pollerEndpoint);
+  const response = await fetch(pollerEndpoint, {
+    headers: {
+      'Accept': 'application/json',
+    }
+  });
   if (!response.ok) {
     throw new Error(`HTTP error! status: ${response.status}`);
   }
   initialData = await response.json();
 } catch (e) {
   console.error("Failed to fetch data on the server:", e);
-  error = 'Failed to load feeds.';
+  error = 'RSS poller service is not running. Please start the RSS poller service.';
 }
 ---
 
@@ -29,7 +33,6 @@ try {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Latest Feeds</title>
-    <link rel="stylesheet" href="../styles/global.css" />
     <style>
     /* feeds.css */
     .feeds-container {
