@@ -7,7 +7,7 @@ import Feeds from '../components/Feeds.tsx';
 
 // Server-side data fetching
 // Use environment variable for the poller endpoint
-const pollerEndpoint = import.meta.env.POLLER_ENDPOINT || 'http://localhost:3000/rss';
+const pollerEndpoint = import.meta.env.POLLER_ENDPOINT || 'http://poller.demo.svc.cluster.local:3000/rss';
 let initialData = [];
 let error;
 
