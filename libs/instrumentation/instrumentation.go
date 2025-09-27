@@ -21,7 +21,7 @@ import (
 var tp *sdktrace.TracerProvider
 
 // nolint
-var tracer trace.Tracer
+// var tracer trace.Tracer
 var once sync.Once
 
 // InitTracer starts the otel tracer
@@ -30,6 +30,10 @@ func InitTracer(tracerName string) (*sdktrace.TracerProvider, error) {
 		"content-type": "application/json",
 	}
 	ep := os.Getenv("OTEL_EP")
+	if ep == "" {
+		log.Info("OTEL_EP not set, using default localhost:4317")
+		ep = "localhost:4317"
+	}
 	log.Info("using OTEL_EP=" + ep)
 	exporter, err := otlptrace.New(
 		context.Background(),
@@ -40,6 +44,7 @@ func InitTracer(tracerName string) (*sdktrace.TracerProvider, error) {
 		),
 	)
 	if err != nil {
+		log.ErrorFmt("Failed to create OTLP trace exporter: %v", err)
 		return nil, err
 	}
 	resources, err := resource.New(
@@ -50,6 +55,7 @@ func InitTracer(tracerName string) (*sdktrace.TracerProvider, error) {
 		),
 	)
 	if err != nil {
+		log.ErrorFmt("Failed to create resource: %v", err)
 		return nil, err
 	}
 
@@ -65,7 +71,7 @@ func InitTracer(tracerName string) (*sdktrace.TracerProvider, error) {
 				propagation.Baggage{}),
 		)
 
-		tracer = tp.Tracer(tracerName)
+		// tracer = tp.Tracer(tracerName)
 	})
 
 	return tp, nil
@@ -73,6 +79,11 @@ func InitTracer(tracerName string) (*sdktrace.TracerProvider, error) {
 
 // GetTracer used to get the otel tracer being used
 func GetTracer(tracerName string) trace.Tracer {
+	// Return a tracer from the tracer provider with the proper resource attributes
+	// If the tracer provider hasn't been initialized yet, fall back to creating a new one
+	if tp != nil {
+		return tp.Tracer(tracerName)
+	}
 	return otel.Tracer(tracerName)
 }
 
