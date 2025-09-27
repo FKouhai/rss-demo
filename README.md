@@ -1,3 +1,17 @@
+[![build frontend](https://github.com/FKouhai/rss-demo/actions/workflows/build_frontend.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/build_frontend.yaml)
+[![build frontend container](https://github.com/FKouhai/rss-demo/actions/workflows/build_frontend_container.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/build_frontend_container.yaml)
+[![build notify](https://github.com/FKouhai/rss-demo/actions/workflows/build_notify.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/build_notify.yaml)[![build notify](https://github.com/FKouhai/rss-demo/actions/workflows/build_notify.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/build_notify.yaml)
+[![build notify container](https://github.com/FKouhai/rss-demo/actions/workflows/build_notify_container.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/build_notify_container.yaml)
+[![build poller](https://github.com/FKouhai/rss-demo/actions/workflows/build_poller.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/build_poller.yaml)
+[![build poller container](https://github.com/FKouhai/rss-demo/actions/workflows/build_poller_container.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/build_poller_container.yaml)
+[![Lint and test PR's for notify](https://github.com/FKouhai/rss-demo/actions/workflows/lint_and_test_notify.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/lint_and_test_notify.yaml)
+[![Lint and test PR's for poller](https://github.com/FKouhai/rss-demo/actions/workflows/lint_and_test_poller.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/lint_and_test_poller.yaml)
+<h1 align="center">
+  <div>
+         <img href="https://builtwithnix.org" src="https://builtwithnix.org/badge.svg"/>
+    </div>
+</h1>
+
 # RSS Microservices Monorepo
 
 ## Overview
