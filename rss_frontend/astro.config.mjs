@@ -6,8 +6,9 @@ import node from '@astrojs/node';
 
 import tailwindcss from '@tailwindcss/vite';
 
-const { NODE_TLS_REJECT_UNAUTHORIZED } = loadEnv(process.env.NODE_ENV || 'development', process.cwd(), "");
+const { NODE_TLS_REJECT_UNAUTHORIZED, POLLER_ENDPOINT } = loadEnv(process.env.NODE_ENV || 'development', process.cwd(), "");
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = NODE_TLS_REJECT_UNAUTHORIZED;
+process.env.POLLER_ENDPOINT = process.env.POLLER_ENDPOINT || POLLER_ENDPOINT;
 
 // https://astro.build/config
 export default defineConfig({
