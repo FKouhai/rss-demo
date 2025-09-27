@@ -15,7 +15,9 @@ import (
 	"github.com/FKouhai/rss-demo/libs/instrumentation"
 	log "github.com/FKouhai/rss-demo/libs/logger"
 	"github.com/mmcdole/gofeed"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -23,6 +25,8 @@ import (
 type discordNotification struct {
 	Content    []string `json:"feed_url"`
 	WebHookURL string   `json:"webhook_url"`
+	// Add context to propagate tracing
+	Ctx context.Context
 }
 
 func (d *discordNotification) sendNotification(dst string) (int, error) {
@@ -33,18 +37,33 @@ func (d *discordNotification) sendNotification(dst string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	log.Info(string(dn))
+	log.InfoFmt("Sending payload to notify service: %s", string(dn))
+
+	// Create a new request with context
 	req, err := http.NewRequest("POST", dst, bytes.NewReader(dn))
 	if err != nil {
 		return 0, err
 	}
+
+	// Add context propagation headers for tracing
 	req.Header.Add("Content-Type", "application/json")
+
+	// Use the context from the discordNotification struct
+	ctx := d.Ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	// Inject the tracing context into the request headers
+	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
+
 	client := &http.Client{}
 	res, err := client.Do(req)
-	log.InfoFmt("got from notify ep %v", res.StatusCode)
 	if err != nil {
+		log.ErrorFmt("Failed to send request to notify service: %v", err)
 		return 0, err
 	}
+	log.InfoFmt("got from notify ep %v", res.StatusCode)
 	// nolint
 	defer res.Body.Close()
 	return res.StatusCode, nil
@@ -176,7 +195,8 @@ func pollAndNotify(t time.Time) {
 	log.InfoFmt("Poller ticker: tick at %v", t)
 
 	// Create a new span for this polling cycle
-	cycleCtx, cycleSpan := instrumentation.GetTracer("poller").Start(
+	tracer := instrumentation.GetTracer("poller")
+	cycleCtx, cycleSpan := tracer.Start(
 		context.Background(),
 		"poller.PollAndNotify",
 		trace.WithSpanKind(trace.SpanKindInternal),
@@ -204,6 +224,7 @@ func pollAndNotify(t time.Time) {
 			notify := discordNotification{
 				Content:    elementsToNotify,
 				WebHookURL: notificationReceiver,
+				Ctx:        cycleCtx, // Pass the context with the span
 			}
 			if _, err := notify.sendNotification(notificationService); err != nil {
 				log.ErrorFmt("Failed to send notification: %v", err)
