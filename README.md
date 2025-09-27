@@ -40,23 +40,59 @@ This repository contains the source code for the microservices responsible for h
 - [Nix](https://nixos.org/download.html) installed on your system.
 - Basic knowledge of Nix, Go, and Astro.
 
-### Local Development
+### Local Development with Arion
 
-To start local development for any of the services, navigate to the respective service directory and use the following command:
-```sh
-nix develop
-```
+For easier local development and testing, this repository includes Arion configuration files that allow you to run all services together with their dependencies.
 
-Or if using direnv
-```sh
-direnv allow
-```
-> [!NOTE]
-> In case the development is being done to the backend microservices it is needed to start jaeger by running at the top of the repo
-```bash
-nix-shell --comand "arion up -d"
-```
-The jaeger interface will be available at http://localhost:16686/
+#### Prerequisites for Arion
+
+- [Nix](https://nixos.org/download.html) installed on your system
+- Docker installed and running
+- Arion installed (automatically available through Nix)
+
+#### Quick Start with Arion
+
+1. Build and load Docker images for all services:
+   ```bash
+   # In the rss_notify directory
+   nix run .#build-and-load-docker
+   
+   # In the rss_poller directory
+   nix run .#build-and-load-docker
+   
+   # In the rss_frontend directory
+   nix run .#build-and-load-docker
+   ```
+
+2. Start all services with dependencies:
+   ```bash
+   # At the root of the repository
+   nix-shell -p arion --run "arion up -d"
+   ```
+
+3. Access the services:
+   - Frontend: http://localhost:4321
+   - RSS Poller API: http://localhost:3000
+   - RSS Notification Service: http://localhost:3001
+   - Valkey: localhost:6379
+
+4. View logs:
+   ```bash
+   nix-shell -p arion --run "arion logs -f"
+   ```
+
+5. Stop services:
+   ```bash
+   nix-shell -p arion --run "arion down"
+   ```
+
+#### Custom Shell Commands
+
+Each service includes a custom shell command to build and load its Docker image:
+
+- `nix run .#build-and-load-docker` - Build the Docker image and load it into Docker daemon
+
+This command simplifies the process of building and loading images during development.
 
 ### Building Services
 
@@ -108,9 +144,23 @@ This will create a development shell with all necessary dependencies.
 
 ### Running Services
 
-To run any of the services, you can build a Docker image and run it.
+To run any of the services, you can either build and run a Docker image directly, or use the custom shell command to build and load the image.
 
-#### Example: Running `rss_notify` in Docker
+#### Option 1: Using Custom Shell Command (Recommended)
+
+Each service includes a custom shell command that builds and loads the Docker image:
+
+1. Build and load the Docker image:
+   ```sh
+   nix run .#build-and-load-docker
+   ```
+
+2. Run the Docker container:
+   ```sh
+   docker run --rm -p 3001:3000 -e OTEL_EP="localhost:4317" rss_notify:latest
+   ```
+
+#### Option 2: Manual Build and Run
 
 1. Build the Docker image:
    ```sh
@@ -121,30 +171,4 @@ To run any of the services, you can build a Docker image and run it.
 2. Run the Docker container:
    ```sh
    docker run --rm -p 3001:3000 -e OTEL_EP="localhost:4317" rss_notify:latest
-   ```
-
-#### Example: Running `rss_poller` in Docker
-
-1. Build the Docker image:
-   ```sh
-   nix build .#dockerImage
-   docker load < result
-   ```
-
-2. Run the Docker container:
-   ```sh
-   docker run --rm -p 3000:3000 -e OTEL_EP="localhost:4317" -e NOTIFICATION_ENDPOINT="http://127.0.0.1:3001/push" -e NOTIFICATION_SENDER="<discord_webhook>" rss_poller:latest
-   ```
-
-#### Example: Running `rss_frontend` in Docker
-
-1. Build the Docker image:
-   ```sh
-   nix build .#dockerImage
-   docker load < result
-   ```
-
-2. Run the Docker container:
-   ```sh
-   docker run --rm -p 4321:4321 -e POLLER_ENDPOINT="http://127.0.0.1:3000/rss" rss_frontend:latest
    ```
