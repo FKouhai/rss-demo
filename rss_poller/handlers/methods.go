@@ -39,7 +39,9 @@ var (
 	cfg        ConfigStruct
 	feedMutex  sync.RWMutex
 	// Store ticker and cancel func for cleanup
-	ticker   *time.Ticker
+	// nolint:unused // This variable is assigned in helpers.go and used for cleanup
+	ticker *time.Ticker
+	// nolint:unused // This variable is assigned in helpers.go and used for cleanup
 	cancelFn context.CancelFunc
 )
 

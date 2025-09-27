@@ -160,6 +160,7 @@ func handleConfigPayload(r *http.Request) error {
 		return errors.New("the request does not contain a JSON payload")
 	}
 	body, err := io.ReadAll(r.Body)
+	// nolint:errcheck
 	defer r.Body.Close()
 	if err != nil {
 		return err
