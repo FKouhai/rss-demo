@@ -24,7 +24,7 @@
       "3001:3000"
     ];
     environment = {
-      OTEL_EP = "host.docker.internal:4317";
+      OTEL_EP = "jaeger:4317";
     };
   };
   services.rss_poller.service = {
@@ -33,7 +33,7 @@
       "3000:3000"
     ];
     environment = {
-      OTEL_EP = "host.docker.internal:4317";
+      OTEL_EP = "jaeger:4317";
       NOTIFICATION_ENDPOINT = "http://rss_notify:3000/push";
       NOTIFICATION_SENDER = "http://discord_webhook_placeholder";
     };
