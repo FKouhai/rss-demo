@@ -83,6 +83,16 @@
             run_dev
           ];
         };
+        
+        # Custom shell command to build and load Docker image
+        apps.build-and-load-docker = {
+          type = "app";
+          program = "${pkgs.writeShellScriptBin "build-and-load-docker" ''
+            nix build .#dockerImage.${system}
+            docker load < result
+            echo "Docker image loaded as rss_frontend:latest"
+          ''}/bin/build-and-load-docker";
+        };
       }
     );
 }

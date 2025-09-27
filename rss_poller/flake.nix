@@ -87,6 +87,16 @@
         devShells.default = callPackage ./shell.nix {
           inherit (gomod2nix.legacyPackages.${system}) mkGoEnv gomod2nix;
         };
+        
+        # Custom shell command to build and load Docker image
+        apps.build-and-load-docker = {
+          type = "app";
+          program = "${pkgs.writeShellScriptBin "build-and-load-docker" ''
+            nix build .#dockerImage.${system}
+            docker load < result
+            echo "Docker image loaded as rss_poller:latest"
+          ''}/bin/build-and-load-docker";
+        };
       }
     ));
 }
