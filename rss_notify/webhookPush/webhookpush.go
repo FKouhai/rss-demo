@@ -4,6 +4,7 @@ package webhookpush
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -33,8 +34,9 @@ type DiscordMessage struct {
 func (d *DiscordNotification) GetContent(content []byte) ([]string, error) {
 	err := json.Unmarshal(content, &d)
 	if err != nil {
-		log.Info("got error")
-		log.ErrorFmt(err.Error())
+		log.Info("got error unmarshaling JSON")
+		log.ErrorFmt("JSON unmarshal error: %v", err.Error())
+		log.ErrorFmt("Received payload: %s", string(content))
 		return nil, err
 	}
 	return d.Content, nil
@@ -70,6 +72,9 @@ func (d *DiscordNotification) SendNotification(message []string) (int, error) {
 }
 
 func (d *DiscordNotification) toDiscordMessage(message []string) ([]byte, error) {
+	if len(message) == 0 {
+		return nil, fmt.Errorf("no messages to send")
+	}
 	dm := DiscordMessage{
 		Content: message[0],
 	}

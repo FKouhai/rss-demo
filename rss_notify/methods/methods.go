@@ -9,19 +9,26 @@ import (
 	"github.com/FKouhai/rss-demo/libs/instrumentation"
 	log "github.com/FKouhai/rss-demo/libs/logger"
 	webhookpush "github.com/FKouhai/rss-notify/webhookPush"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 )
 
 // PushNotificationHandler is the handler that is in charge of sending notification to the destination sourceloggers
 func PushNotificationHandler(w http.ResponseWriter, r *http.Request) {
 	log.Info("connection established")
-	ctx := r.Context()
+
+	// Extract the tracing context from the incoming request headers
+	ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+
 	_, span := instrumentation.GetTracer("notify").Start(ctx, "handlers.PushNotification", trace.WithSpanKind(trace.SpanKindServer))
 	defer span.End()
 
 	if r.Method != "POST" {
 		w.WriteHeader(http.StatusBadRequest)
 		log.Error("wrong method was used")
+		span.SetAttributes(attribute.Int("http.status_code", http.StatusBadRequest))
 		return
 	}
 
@@ -29,6 +36,7 @@ func PushNotificationHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		log.Info("not using json")
 		span.AddEvent("FAILED_TRANSACTION")
+		span.SetAttributes(attribute.Int("http.status_code", http.StatusBadRequest))
 		return
 	}
 
@@ -38,6 +46,7 @@ func PushNotificationHandler(w http.ResponseWriter, r *http.Request) {
 		span.AddEvent("FAILED_TRANSACTION")
 		span.RecordError(err)
 		span.SetStatus(http.StatusBadRequest, err.Error())
+		span.SetAttributes(attribute.Int("http.status_code", http.StatusBadRequest))
 		log.Error(err.Error())
 		return
 	}
@@ -50,6 +59,7 @@ func PushNotificationHandler(w http.ResponseWriter, r *http.Request) {
 		span.AddEvent("FAILED_TRANSACTION")
 		span.RecordError(err)
 		span.SetStatus(http.StatusBadRequest, err.Error())
+		span.SetAttributes(attribute.Int("http.status_code", http.StatusBadRequest))
 		log.Error(err.Error())
 		return
 	}
@@ -60,28 +70,32 @@ func PushNotificationHandler(w http.ResponseWriter, r *http.Request) {
 		span.AddEvent("FAILED_TRANSACTION")
 		span.RecordError(err)
 		span.SetStatus(http.StatusInternalServerError, err.Error())
-		w.WriteHeader(http.StatusInternalServerError)
+		span.SetAttributes(attribute.Int("http.status_code", http.StatusInternalServerError))
 		log.Error(err.Error())
 		return
 	}
 
 	w.WriteHeader(httpStatus)
-
+	span.SetAttributes(attribute.Int("http.status_code", httpStatus))
 }
 
 // HealthzHandler is the route that exposes a healthcheck
 func HealthzHandler(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+	// Extract the tracing context from the incoming request headers
+	ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+
 	_, span := instrumentation.GetTracer("notify").Start(ctx, "handlers.HealthzHandler", trace.WithSpanKind(trace.SpanKindServer))
 	defer span.End()
 	log.Info("connection to /health established")
 	w.WriteHeader(http.StatusOK)
+	span.SetAttributes(attribute.Int("http.status_code", http.StatusOK))
 	status := map[string]string{"status": "healthy"}
 	err := json.NewEncoder(w).Encode(status)
 	if err != nil {
 		span.AddEvent("FAILED_TRANSACTION")
 		span.RecordError(err)
 		span.SetStatus(http.StatusInternalServerError, err.Error())
+		span.SetAttributes(attribute.Int("http.status_code", http.StatusInternalServerError))
 		log.Error(err.Error())
 		w.WriteHeader(http.StatusInternalServerError)
 		return
