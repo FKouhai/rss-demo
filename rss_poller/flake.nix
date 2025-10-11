@@ -98,6 +98,7 @@
               gofmt.enable = true;
               gotest.enable = true;
               golangci-lint.enable = true;
+              convco.enable = true;
             };
           };
         };
