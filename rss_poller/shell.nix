@@ -12,16 +12,20 @@
   ),
   mkGoEnv ? pkgs.mkGoEnv,
   gomod2nix ? pkgs.gomod2nix,
+  enabledPackages,
+  shellHook,
 }:
 
 let
   goEnv = mkGoEnv { pwd = ./.; };
 in
 pkgs.mkShell {
+  inherit shellHook;
   packages = [
     goEnv
     gomod2nix
     pkgs.trivy
     pkgs.dive
+    enabledPackages
   ];
 }

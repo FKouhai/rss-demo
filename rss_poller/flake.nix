@@ -104,6 +104,7 @@
         packages.default = rss-poller;
         devShells.default = callPackage ./shell.nix {
           inherit (gomod2nix.legacyPackages.${system}) mkGoEnv gomod2nix;
+          inherit (self.checks.${system}.pre-commit-check) shellHook enabledPackages;
         };
 
         # Custom shell command to build and load Docker image
