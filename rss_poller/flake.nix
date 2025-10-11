@@ -1,16 +1,24 @@
 {
   description = "A basic gomod2nix flake";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-  inputs.flake-utils.url = "github:numtide/flake-utils";
-  inputs.gomod2nix.url = "github:nix-community/gomod2nix";
-  inputs.gomod2nix.inputs.nixpkgs.follows = "nixpkgs";
-  inputs.gomod2nix.inputs.flake-utils.follows = "flake-utils";
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    flake-utils.url = "github:numtide/flake-utils";
+    git-hooks.url = "github:cachix/git-hooks.nix";
+    gomod2nix = {
+      url = "github:nix-community/gomod2nix";
+      inputs = {
+        nixpkgs.follows = "nixpkgs";
+        flake-utils.follows = "flake-utils";
+      };
+    };
+  };
 
   outputs =
     {
       self,
       nixpkgs,
+      git-hooks,
       flake-utils,
       gomod2nix,
     }:
@@ -82,12 +90,22 @@
         inherit dockerImage rss-poller;
         checks = {
           inherit go-test go-lint;
+          pre-commit-check = git-hooks.lib.${system}.run {
+            src = ./.;
+            hooks = {
+              nixfmt-rfc-style.enable = true;
+              commitizen.enable = true;
+              gofmt.enable = true;
+              gotest.enable = true;
+              golangci-lint.enable = true;
+            };
+          };
         };
         packages.default = rss-poller;
         devShells.default = callPackage ./shell.nix {
           inherit (gomod2nix.legacyPackages.${system}) mkGoEnv gomod2nix;
         };
-        
+
         # Custom shell command to build and load Docker image
         apps.build-and-load-docker = {
           type = "app";
