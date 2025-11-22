@@ -13,17 +13,18 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
+	"go.uber.org/zap"
 )
 
 // PushNotificationHandler is the handler that is in charge of sending notification to the destination sourceloggers
 func PushNotificationHandler(w http.ResponseWriter, r *http.Request) {
-	log.Info("connection established")
-
 	// Extract the tracing context from the incoming request headers
 	ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
 
 	_, span := instrumentation.GetTracer("notify").Start(ctx, "handlers.PushNotification", trace.WithSpanKind(trace.SpanKindServer))
 	defer span.End()
+
+	log.Info("connection established", zap.String("trace_id", span.SpanContext().TraceID().String()))
 
 	if r.Method != "POST" {
 		w.WriteHeader(http.StatusBadRequest)
@@ -52,7 +53,7 @@ func PushNotificationHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var d webhookpush.DiscordNotification
-	message, err := d.GetContent(body)
+	message, err := d.GetContent(ctx, body)
 	if err != nil {
 		log.Error("fails here")
 		w.WriteHeader(http.StatusBadRequest)
@@ -63,8 +64,9 @@ func PushNotificationHandler(w http.ResponseWriter, r *http.Request) {
 		log.Error(err.Error())
 		return
 	}
+	span.SetAttributes(attribute.Int("messages.count", len(message)))
 
-	httpStatus, err := d.SendNotification(message)
+	httpStatus, err := d.SendNotification(ctx, message)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		span.AddEvent("FAILED_TRANSACTION")
@@ -76,7 +78,7 @@ func PushNotificationHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(httpStatus)
-	span.SetAttributes(attribute.Int("http.status_code", httpStatus))
+	span.SetAttributes(attribute.Int("http.status_code", httpStatus), attribute.Int("webhook.status", httpStatus))
 }
 
 // HealthzHandler is the route that exposes a healthcheck
@@ -86,7 +88,7 @@ func HealthzHandler(w http.ResponseWriter, r *http.Request) {
 
 	_, span := instrumentation.GetTracer("notify").Start(ctx, "handlers.HealthzHandler", trace.WithSpanKind(trace.SpanKindServer))
 	defer span.End()
-	log.Info("connection to /health established")
+	log.Info("connection to /health established", zap.String("trace_id", span.SpanContext().TraceID().String()))
 	w.WriteHeader(http.StatusOK)
 	span.SetAttributes(attribute.Int("http.status_code", http.StatusOK))
 	status := map[string]string{"status": "healthy"}

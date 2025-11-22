@@ -1,6 +1,7 @@
 package webhookpush
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -31,7 +32,7 @@ func TestGetContent(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	got, err := d.GetContent(body)
+	got, err := d.GetContent(context.Background(), body)
 	if err != nil {
 		t.Error(err)
 	}
@@ -51,7 +52,7 @@ func TestGetContent(t *testing.T) {
 func TestGetContentError(t *testing.T) {
 	b := []byte("malformatted string")
 	var d DiscordNotification
-	_, err := d.GetContent(b)
+	_, err := d.GetContent(context.Background(), b)
 	if err == nil {
 		t.Error("got no error when was expecting one")
 	}
@@ -65,7 +66,7 @@ func TestSendNotification(t *testing.T) {
 	}
 
 	msg := []string{"https://www.tomshardware.com/video-games/pc-gaming/signalrgb-takes-a-swipe-at-razer-makes-functioning-rgb-toaster-pc-quad-slice-toaster-case-incorporates-a-stream-deck-mini-itx-components"}
-	resp, err := d.SendNotification(msg)
+	resp, err := d.SendNotification(context.Background(), msg)
 	if err != nil {
 		t.Error(err)
 	}
@@ -80,7 +81,7 @@ func TestSendNotificationError(t *testing.T) {
 	}
 	msg := []string{"https://mockedurl.com/with/new/article"}
 
-	_, err := d.SendNotification(msg)
+	_, err := d.SendNotification(context.Background(), msg)
 	if err == nil {
 		t.Error("Expected error but got nil")
 	}
