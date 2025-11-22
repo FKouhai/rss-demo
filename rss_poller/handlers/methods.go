@@ -14,6 +14,7 @@ import (
 	"github.com/mmcdole/gofeed"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
+	"go.uber.org/zap"
 )
 
 // ConfigStruct contains the accepted config fields that this microservice will use
@@ -52,7 +53,7 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 	_, span := instrumentation.GetTracer("poller").Start(ctx, "handlers.ConfigHandler", trace.WithSpanKind(trace.SpanKindServer))
 	defer span.End()
 
-	log.Info("accepted connection")
+	log.Info("accepted connection", zap.String("trace_id", span.SpanContext().TraceID().String()))
 
 	if err := handleConfigPayload(r); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -74,7 +75,7 @@ func HealthzHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	_, span := instrumentation.GetTracer("poller").Start(ctx, "handlers.HealthzHandler", trace.WithSpanKind(trace.SpanKindServer))
 	defer span.End()
-	log.Info("connection to /health established")
+	log.Info("connection to /health established", zap.String("trace_id", span.SpanContext().TraceID().String()))
 	w.WriteHeader(http.StatusOK)
 	status := map[string]string{"status": "healthy"}
 	err := json.NewEncoder(w).Encode(status)
@@ -94,6 +95,7 @@ func RSSHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:4321")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	w.Header().Set("Content-Type", "application/json")
 	rctx, span := instrumentation.GetTracer("poller").Start(ctx, "handlers.RSSHandler", trace.WithSpanKind(trace.SpanKindServer))
 	defer span.End()
 	feeds := globalFeed
@@ -101,11 +103,11 @@ func RSSHandler(w http.ResponseWriter, r *http.Request) {
 		httpCode: attribute.Int("http.status", http.StatusOK),
 		method:   attribute.String("http.method", "GET"),
 	}
-	log.Info("connection to /rss established")
+	log.Info("connection to /rss established", zap.String("trace_id", span.SpanContext().TraceID().String()))
 	// checks if feeds have already been set, otherwise call ParseRSS and set the feeds locally
 	// used as a sanity check to prevent possible race conditions
 	if feeds == nil {
-		log.Info("got null feeds")
+		log.Info("got null feeds", zap.String("trace_id", span.SpanContext().TraceID().String()))
 		var err error
 		feeds, err = ParseRSS(rctx, cfg.RSSFeeds)
 		if err != nil {
@@ -115,11 +117,7 @@ func RSSHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	body, err := toJSON(feeds)
-	if err != nil {
-		return
-	}
-	_, err = w.Write(body)
+	err := toJSON(w, feeds)
 	if err != nil {
 		log.Error(err.Error())
 		w.WriteHeader(http.StatusInternalServerError)

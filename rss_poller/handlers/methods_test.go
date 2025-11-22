@@ -57,54 +57,50 @@ func TestConfig(t *testing.T) {
 	if requestRecorder.Code != http.StatusOK {
 		t.Errorf("Handler returned a different code from 200: %v", requestRecorder.Code)
 	}
-}
 
-func TestConfigNotGet(t *testing.T) {
-	req, err := http.NewRequest("GET", "/config", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	requestRecorder := httptest.NewRecorder()
-	handler := http.HandlerFunc(ConfigHandler)
-	handler.ServeHTTP(requestRecorder, req)
-	want := http.StatusBadRequest
-	got := requestRecorder.Code
-	if got != want {
-		t.Errorf("Want: %v, Got: %v", want, got)
+	expectedFeeds := []string{"https://example.com/rss"}
+	if !reflect.DeepEqual(cfg.RSSFeeds, expectedFeeds) {
+		t.Errorf("Expected feeds: %v, got: %v", expectedFeeds, cfg.RSSFeeds)
 	}
 }
 
-func TestConfigJSONDecodeError(t *testing.T) {
-	payload := []byte(`{"wrong_feeds":1a}`)
-	req, err := http.NewRequest("POST", "/config", bytes.NewBuffer(payload))
-	if err != nil {
-		t.Fatal(err)
+func TestConfigErrors(t *testing.T) {
+	testCases := []struct {
+		name           string
+		request        *http.Request
+		expectedStatus int
+	}{
+		{
+			name:           "InvalidMethod",
+			request:        httptest.NewRequest("GET", "/config", nil),
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "InvalidJSON",
+			request:        httptest.NewRequest("POST", "/config", bytes.NewBufferString(`{"wrong_feeds":1a}`)),
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "WrongContentType",
+			request:        httptest.NewRequest("POST", "/config", bytes.NewBufferString(`{"rss_feeds": ["https://example.com/rss"]}`)),
+			expectedStatus: http.StatusBadRequest,
+		},
 	}
-	req.Header.Set("Content-Type", "application/json")
-	requestRecorder := httptest.NewRecorder()
-	handler := http.HandlerFunc(ConfigHandler)
-	handler.ServeHTTP(requestRecorder, req)
-	want := http.StatusBadRequest
-	got := requestRecorder.Code
-	if got != want {
-		t.Errorf("Want: %v, Got: %v", want, got)
-	}
-}
 
-func TestConfigWrongContentType(t *testing.T) {
-	payload := []byte(`{"rss_feeds": ["https://example.com/rss"]}`)
-	req, err := http.NewRequest("POST", "/config", bytes.NewBuffer(payload))
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	requestRecorder := httptest.NewRecorder()
-	handler := http.HandlerFunc(ConfigHandler)
-	handler.ServeHTTP(requestRecorder, req)
-	want := http.StatusBadRequest
-	got := requestRecorder.Code
-	if got != want {
-		t.Errorf("Want: %v, Got: %v", want, got)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.name == "WrongContentType" {
+				tc.request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			} else {
+				tc.request.Header.Set("Content-Type", "application/json")
+			}
+			requestRecorder := httptest.NewRecorder()
+			handler := http.HandlerFunc(ConfigHandler)
+			handler.ServeHTTP(requestRecorder, tc.request)
+			if requestRecorder.Code != tc.expectedStatus {
+				t.Errorf("Expected status %v, got: %v", tc.expectedStatus, requestRecorder.Code)
+			}
+		})
 	}
 }
 
@@ -157,7 +153,34 @@ func TestParseRSS(t *testing.T) {
 		if len(v.Items) != 2 {
 			t.Error("Expected 2 ites in the feed")
 		}
-
+		expectedItems := []*gofeed.Item{
+			{
+				Title:       "Test Item 1",
+				Description: "Description for Test Item 1",
+				Content:     "Content for Test Item 1",
+				Link:        "http://example.com/item1",
+			},
+			{
+				Title:       "Test Item 2",
+				Description: "Description for Test Item 2",
+				Content:     "Content for Test Item 2",
+				Link:        "http://example.com/item2",
+			},
+		}
+		for i, item := range v.Items {
+			if item.Title != expectedItems[i].Title {
+				t.Errorf("Expected title %s, got: %s", expectedItems[i].Title, item.Title)
+			}
+			if item.Description != expectedItems[i].Description {
+				t.Errorf("Expected description %s, got: %s", expectedItems[i].Description, item.Description)
+			}
+			if item.Content != expectedItems[i].Content {
+				t.Errorf("Expected content %s, got: %s", expectedItems[i].Content, item.Content)
+			}
+			if item.Link != expectedItems[i].Link {
+				t.Errorf("Expected link %s, got: %s", expectedItems[i].Link, item.Link)
+			}
+		}
 	}
 }
 
@@ -175,10 +198,106 @@ func TestRSSHandler(t *testing.T) {
 	if requestRecorder.Code != http.StatusOK {
 		t.Errorf("expected %v, got: %v", http.StatusOK, requestRecorder.Code)
 	}
-	want := `[{"title":"Test Item 1","description":"Description for Test Item 1","content":"Content for Test Item 1","link":"http://example.com/item1"},{"title":"Test Item 2","description":"Description for Test Item 2","content":"Content for Test Item 2","link":"http://example.com/item2"}]`
-	got := requestRecorder.Body.String()
-	if got != want {
-		t.Errorf("got: %v , want: %v", got, want)
+
+	var feeds []feedsJSON
+	err = json.NewDecoder(requestRecorder.Body).Decode(&feeds)
+	if err != nil {
+		t.Fatalf("Failed to decode response body: %v", err)
+	}
+
+	expectedFeeds := []feedsJSON{
+		{
+			Title:       "Test Item 1",
+			Description: "Description for Test Item 1",
+			Content:     "Content for Test Item 1",
+			Link:        "http://example.com/item1",
+		},
+		{
+			Title:       "Test Item 2",
+			Description: "Description for Test Item 2",
+			Content:     "Content for Test Item 2",
+			Link:        "http://example.com/item2",
+		},
+	}
+
+	if !reflect.DeepEqual(feeds, expectedFeeds) {
+		t.Errorf("Expected feeds: %v, got: %v", expectedFeeds, feeds)
+	}
+}
+
+func TestProcessFeeds(t *testing.T) {
+	feed := &gofeed.Feed{
+		Items: []*gofeed.Item{
+			{
+				Title:       "Test Item 1",
+				Description: "Test Description 1",
+				Content:     "Test Content 1",
+				Link:        "http://example.com/1",
+			},
+			{
+				Title:       "Test Item 2",
+				Description: "Test Description 2",
+				Content:     "Test Content 2",
+				Link:        "http://example.com/2",
+			},
+		},
+	}
+
+	expectedFeeds := []feedsJSON{
+		{
+			Title:       "Test Item 1",
+			Description: "Test Description 1",
+			Content:     "Test Content 1",
+			Link:        "http://example.com/1",
+		},
+		{
+			Title:       "Test Item 2",
+			Description: "Test Description 2",
+			Content:     "Test Content 2",
+			Link:        "http://example.com/2",
+		},
+	}
+
+	feeds := processFeeds(context.Background(), feed)
+
+	if !reflect.DeepEqual(feeds, expectedFeeds) {
+		t.Errorf("Expected feeds: %v, got: %v", expectedFeeds, feeds)
+	}
+}
+
+func TestToJSON(t *testing.T) {
+	feed := []*gofeed.Feed{
+		{
+			Title:       "Test Feed",
+			Description: "Test Description",
+			Items: []*gofeed.Item{
+				{
+					Title:       "Test Item 1",
+					Description: "Test Description 1",
+					Content:     "Test Content 1",
+					Link:        "http://example.com/1",
+				},
+				{
+					Title:       "Test Item 2",
+					Description: "Test Description 2",
+					Content:     "Test Content 2",
+					Link:        "http://example.com/2",
+				},
+			},
+		},
+	}
+
+	expectedJSON := `[{"title":"Test Item 1","description":"Test Description 1","content":"Test Content 1","link":"http://example.com/1"},{"title":"Test Item 2","description":"Test Description 2","content":"Test Content 2","link":"http://example.com/2"}]
+`
+
+	var buf bytes.Buffer
+	err := toJSON(&buf, feed)
+	if err != nil {
+		t.Fatalf("toJSON returned an error: %v", err)
+	}
+
+	if buf.String() != expectedJSON {
+		t.Errorf("Expected JSON: %s, got: %s", expectedJSON, buf.String())
 	}
 }
 
@@ -266,7 +385,7 @@ func TestDiffie(t *testing.T) {
 
 	// Test case 1: New elements are found
 	t.Run("NewElementsFound", func(t *testing.T) {
-		diff := diffie(baseFeeds, extraFeeds)
+		diff := diffie(context.Background(), baseFeeds, extraFeeds)
 
 		if len(diff) != 1 {
 			t.Fatalf("Expected 1 new element, but got %d", len(diff))
@@ -289,7 +408,7 @@ func TestDiffie(t *testing.T) {
 			},
 		}
 
-		diff := diffie(baseFeeds, extraFeeds)
+		diff := diffie(context.Background(), baseFeeds, extraFeeds)
 
 		if len(diff) != 0 {
 			t.Fatalf("Expected 0 new elements, but got %d", len(diff))
@@ -305,7 +424,7 @@ func TestDiffie(t *testing.T) {
 			},
 		}
 
-		diff := diffie(baseFeeds, extraFeeds)
+		diff := diffie(context.Background(), baseFeeds, extraFeeds)
 
 		if len(diff) != 2 {
 			t.Fatalf("Expected 2 new elements, but got %d", len(diff))
