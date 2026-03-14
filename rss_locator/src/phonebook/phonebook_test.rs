@@ -13,7 +13,10 @@ mod tests {
     #[test]
     fn test_register_new_service() {
         let mut pb = PhoneBook::new();
-        let result = pb.register("config".to_string(), "config.demo.kubernetes.service.local".to_string());
+        let result = pb.register(
+            "config".to_string(),
+            "config.demo.kubernetes.service.local".to_string(),
+        );
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "Registered successfully");
         assert_eq!(
@@ -25,17 +28,25 @@ mod tests {
     #[test]
     fn test_register_duplicate() {
         let mut pb = PhoneBook::new();
-        pb.register("config".to_string(), "config.demo.kubernetes.service.local".to_string())
-            .unwrap();
-        let result = pb.register("config".to_string(), "config.demo.kubernetes.service.local".to_string());
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "Service already registered with this FQDN");
+        pb.register(
+            "config".to_string(),
+            "config.demo.kubernetes.service.local".to_string(),
+        )
+        .unwrap();
+        let result = pb.register(
+            "config".to_string(),
+            "config.demo.kubernetes.service.local".to_string(),
+        );
+        // Idempotent registration: re-registering same service with same FQDN should succeed
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "Registered successfully");
     }
 
     #[test]
     fn test_register_fqdn_conflict() {
         let mut pb = PhoneBook::new();
-        pb.register("config".to_string(), "shared.fqdn".to_string()).unwrap();
+        pb.register("config".to_string(), "shared.fqdn".to_string())
+            .unwrap();
         let result = pb.register("notify".to_string(), "shared.fqdn".to_string());
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "FQDN already registered");
@@ -47,18 +58,19 @@ mod tests {
         pb.register("config".to_string(), "config.old.fqdn".to_string())
             .unwrap();
         let result = pb.register("config".to_string(), "config.new.fqdn".to_string());
+        // Idempotent registration: re-registering same service with different FQDN should update it
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "Updated existing service");
-        assert_eq!(
-            pb.get_entry("config"),
-            Some(&"config.new.fqdn".to_string())
-        );
+        assert_eq!(result.unwrap(), "Registered successfully");
+        assert_eq!(pb.get_entry("config"), Some(&"config.new.fqdn".to_string()));
     }
 
     #[test]
     fn test_add_entry() {
         let mut pb = PhoneBook::new();
-        pb.add_entry("config".to_string(), "config.demo.kubernetes.service.local".to_string());
+        pb.add_entry(
+            "config".to_string(),
+            "config.demo.kubernetes.service.local".to_string(),
+        );
         assert_eq!(
             pb.get_entry("config"),
             Some(&"config.demo.kubernetes.service.local".to_string())
@@ -68,17 +80,29 @@ mod tests {
     #[test]
     fn test_remove_entry() {
         let mut pb = PhoneBook::new();
-        pb.add_entry("config".to_string(), "config.demo.kubernetes.service.local".to_string());
+        pb.add_entry(
+            "config".to_string(),
+            "config.demo.kubernetes.service.local".to_string(),
+        );
         let result = pb.remove_entry("config");
-        assert_eq!(result, Some("config.demo.kubernetes.service.local".to_string()));
+        assert_eq!(
+            result,
+            Some("config.demo.kubernetes.service.local".to_string())
+        );
         assert_eq!(pb.get_entry("config"), None);
     }
 
     #[test]
     fn test_list_entries() {
         let mut pb = PhoneBook::new();
-        pb.add_entry("config".to_string(), "config.demo.kubernetes.service.local".to_string());
-        pb.add_entry("notify".to_string(), "notify.demo.kubernetes.service.local".to_string());
+        pb.add_entry(
+            "config".to_string(),
+            "config.demo.kubernetes.service.local".to_string(),
+        );
+        pb.add_entry(
+            "notify".to_string(),
+            "notify.demo.kubernetes.service.local".to_string(),
+        );
         let entries = pb.list_entries();
         assert_eq!(entries.len(), 2);
     }

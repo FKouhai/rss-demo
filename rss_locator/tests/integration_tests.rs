@@ -52,6 +52,7 @@ async fn test_update_existing_service() {
         .to_request();
 
     let resp = test::call_service(&app, req).await;
+    // Idempotent registration: re-registering same service with different FQDN should update it
     assert!(resp.status().is_success());
 
     let phonebook = phonebook.lock().unwrap();
@@ -86,7 +87,8 @@ async fn test_register_duplicate() {
         .to_request();
 
     let resp = test::call_service(&app, req).await;
-    assert_eq!(resp.status(), 400);
+    // Idempotent registration: re-registering same service with same FQDN should succeed
+    assert!(resp.status().is_success());
 }
 
 #[actix_web::test]
@@ -133,7 +135,7 @@ async fn test_services_lookup_success() {
     )
     .await;
 
-    let req = test::TestRequest::get()
+    let req = test::TestRequest::post()
         .uri("/services")
         .set_json(&ServiceRequest {
             service: "config".to_string(),
@@ -155,7 +157,7 @@ async fn test_services_lookup_not_found() {
     )
     .await;
 
-    let req = test::TestRequest::get()
+    let req = test::TestRequest::post()
         .uri("/services")
         .set_json(&ServiceRequest {
             service: "nonexistent".to_string(),
@@ -188,7 +190,7 @@ async fn test_full_workflow() {
     let resp = test::call_service(&app, register_req).await;
     assert!(resp.status().is_success());
 
-    let lookup_req = test::TestRequest::get()
+    let lookup_req = test::TestRequest::post()
         .uri("/services")
         .set_json(&ServiceRequest {
             service: "config".to_string(),

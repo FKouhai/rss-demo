@@ -34,14 +34,6 @@ impl PhoneBook {
             }
         }
 
-        if let Some(existing_fqdn) = self.entries.get(&service) {
-            if existing_fqdn == &fqdn {
-                return Err("Service already registered with this FQDN".to_string());
-            }
-            *self.entries.get_mut(&service).unwrap() = fqdn;
-            return Ok("Updated existing service".to_string());
-        }
-
         self.entries.insert(service, fqdn);
         Ok("Registered successfully".to_string())
     }

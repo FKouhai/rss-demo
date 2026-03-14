@@ -1,8 +1,8 @@
 use opentelemetry::global;
 use opentelemetry::KeyValue;
+use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::resource::Resource;
 use opentelemetry_sdk::trace::{Sampler, SdkTracerProvider};
-use opentelemetry_otlp::WithExportConfig;
 use std::env;
 use std::error::Error;
 
@@ -17,6 +17,14 @@ pub fn init_tracer(service_name: &str) -> Result<(), Box<dyn Error + Send + Sync
     let resource = Resource::builder_empty()
         .with_attribute(KeyValue::new("service.name", format!("{}", service_name)))
         .with_attribute(KeyValue::new("library.language", "rust"))
+        .with_attribute(KeyValue::new(
+            "service.version",
+            env::var("SERVICE_VERSION").unwrap_or_else(|_| "0.1.0".to_string()),
+        ))
+        .with_attribute(KeyValue::new(
+            "deployment.environment",
+            env::var("ENV").unwrap_or_else(|_| "development".to_string()),
+        ))
         .build();
 
     let exporter = opentelemetry_otlp::SpanExporter::builder()
