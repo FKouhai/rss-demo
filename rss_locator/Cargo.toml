@@ -1,0 +1,18 @@
+[package]
+name = "rss_locator"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+actix-web = "4"
+serde = { version = "1.0", features = ["derive"] }
+opentelemetry = "0.31"
+opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.31", features = ["grpc-tonic"] }
+opentelemetry-semantic-conventions = "0.31"
+opentelemetry-instrumentation-actix-web = "0.23"
+tonic = "0.14"
+tokio = "1.0"
+
+[dev-dependencies]
+actix-rt = "2"
