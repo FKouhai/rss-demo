@@ -1,12 +1,6 @@
 _: {
   project.name = "local_infra";
   services = {
-    valkey.service = {
-      image = "valkey/valkey-bundle:8.1.0-alpine";
-      ports = [
-        "6379:6379"
-      ];
-    };
     jaeger.service = {
       image = "jaegertracing/all-in-one:1.73.0";
       environment = {
@@ -38,7 +32,6 @@ _: {
       environment = {
         OTEL_EP = "jaeger:4317";
         NOTIFICATION_ENDPOINT = "https://discord.com/api/webhooks/1421594472923267084/207qADiqkjML0Vllr8SX9kF0hgN3piPRxx8pb4tcODcgn-W8VoIVNELfWo7-rTkPlj99";
-        NOTIFICATION_SENDER = "http://rss_notify:3000/push";
         LOCATOR_URL = "http://rss_locator:3000";
       };
     };
