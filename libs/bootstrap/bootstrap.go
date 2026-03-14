@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	log "github.com/FKouhai/rss-demo/libs/logger"
@@ -58,6 +59,33 @@ func retryWithBackoff(name string, config retryConfig, fn func() error) error {
 		return nil
 	}
 	return nil
+}
+
+// WaitForLocator polls the locator's health endpoint until it becomes available
+func WaitForLocator() error {
+	locatorURL := os.Getenv("LOCATOR_URL")
+	if locatorURL == "" {
+		log.Info("LOCATOR_URL not set, skipping locator health check")
+		return nil
+	}
+
+	healthEndpoint := fmt.Sprintf("%s/health", locatorURL)
+	return retryWithBackoff("Locator Health Check", retryConfig{
+		maxRetries: 10,
+		baseDelay:  1 * time.Second,
+		maxDelay:   5 * time.Second,
+	}, func() error {
+		resp, err := http.Get(healthEndpoint)
+		if err != nil {
+			return fmt.Errorf("locator not reachable: %w", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("locator health check returned status %d", resp.StatusCode)
+		}
+		return nil
+	})
 }
 
 // Init registers the service with the locator service
@@ -141,7 +169,11 @@ func GetServiceFQDN(serviceName string) (string, error) {
 			return fmt.Errorf("failed to decode response: %w", err)
 		}
 
-		result = fqdnResp.FQDN
+		fqdn := fqdnResp.FQDN
+		if !strings.HasPrefix(fqdn, "http://") && !strings.HasPrefix(fqdn, "https://") {
+			fqdn = "http://" + fqdn
+		}
+		result = fqdn
 		return nil
 	})
 
