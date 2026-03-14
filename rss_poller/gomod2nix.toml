@@ -73,6 +73,9 @@ schema = 3
   [mod."golang.org/x/net"]
     version = "v0.43.0"
     hash = "sha256-bf3iQFrsC8BoarVaS0uSspEFAcr1zHp1uziTtBpwV34="
+  [mod."golang.org/x/sync"]
+    version = "v0.18.0"
+    hash = "sha256-S8o6y7GOaYWeq+TzT8BB6T+1mg82Mu08V0TL3ukJprg="
   [mod."golang.org/x/sys"]
     version = "v0.35.0"
     hash = "sha256-ZKM8pesQE6NAFZeKQ84oPn5JMhGr8g4TSwLYAsHMGSI="

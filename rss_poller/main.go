@@ -3,14 +3,23 @@ package main
 import (
 	"context"
 	"net/http"
+	"os"
 	"time"
 
+	"github.com/FKouhai/rss-demo/libs/bootstrap"
 	"github.com/FKouhai/rss-demo/libs/instrumentation"
 	log "github.com/FKouhai/rss-demo/libs/logger"
 	"github.com/FKouhai/rss-poller/handlers"
 )
 
 func main() {
+	serviceFQDN := os.Getenv("SERVICE_FQDN")
+	if serviceFQDN == "" {
+		serviceFQDN = "poller:3000"
+	}
+	if err := bootstrap.Init("poller", serviceFQDN); err != nil {
+		log.Error(err.Error())
+	}
 	tp, err := instrumentation.InitTracer("poller")
 	if err != nil {
 		log.Error(err.Error())

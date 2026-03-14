@@ -175,6 +175,7 @@ func ParseRSS(ctx context.Context, feedURL []string) ([]*gofeed.Feed, error) {
 	}
 
 	span.SetAttributes(attribute.Int("feeds.parsed", len(feeds)))
+	span.AddEvent("got feed")
 	log.Info("got feed", zap.String("trace_id", span.SpanContext().TraceID().String()))
 	return feeds, nil
 }

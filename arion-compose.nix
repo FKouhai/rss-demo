@@ -26,6 +26,7 @@ _: {
       ];
       environment = {
         OTEL_EP = "jaeger:4317";
+        LOCATOR_URL = "http://rss_locator:3000";
       };
     };
 
@@ -38,6 +39,7 @@ _: {
         OTEL_EP = "jaeger:4317";
         NOTIFICATION_ENDPOINT = "https://discord.com/api/webhooks/1421594472923267084/207qADiqkjML0Vllr8SX9kF0hgN3piPRxx8pb4tcODcgn-W8VoIVNELfWo7-rTkPlj99";
         NOTIFICATION_SENDER = "http://rss_notify:3000/push";
+        LOCATOR_URL = "http://rss_locator:3000";
       };
     };
 
@@ -48,6 +50,18 @@ _: {
       ];
       environment = {
         POLLER_ENDPOINT = "http://rss_poller:3000/rss";
+        OTEL_EP = "jaeger:4317";
+        LOCATOR_URL = "http://rss_locator:3000";
+      };
+    };
+
+    rss_locator.service = {
+      image = "rss_locator:latest";
+      ports = [
+        "3002:3000"
+      ];
+      environment = {
+        OTEL_EP = "jaeger:4317";
       };
     };
 
