@@ -3,7 +3,7 @@ module github.com/FKouhai/rss-poller
 go 1.24.0
 
 require (
-	github.com/FKouhai/rss-demo v0.0.0-20260314150840-c47157927748
+	github.com/FKouhai/rss-demo v0.0.0-20260314230409-f6dec0fc2fa6
 	github.com/mmcdole/gofeed v1.3.0
 	go.opentelemetry.io/otel v1.38.0
 	go.opentelemetry.io/otel/trace v1.38.0

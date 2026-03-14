@@ -1,5 +1,5 @@
-github.com/FKouhai/rss-demo v0.0.0-20260314150840-c47157927748 h1:NLcabXHPPUKrcKaPW6VRlNq709aUG5/t9Xk47lUSDzs=
-github.com/FKouhai/rss-demo v0.0.0-20260314150840-c47157927748/go.mod h1:UPoIm4HlkJNzzxOVVdfwqL55fQhZu/Y8zY5r5I7x9mE=
+github.com/FKouhai/rss-demo v0.0.0-20260314230409-f6dec0fc2fa6 h1:RRmdma6rL5jYwV0A3/jGPIWZtS8PtUPncdq3pLtQoW0=
+github.com/FKouhai/rss-demo v0.0.0-20260314230409-f6dec0fc2fa6/go.mod h1:UPoIm4HlkJNzzxOVVdfwqL55fQhZu/Y8zY5r5I7x9mE=
 github.com/cenkalti/backoff/v5 v5.0.3 h1:ZN+IMa753KfX5hd8vVaMixjnqRZ3y8CuJKRKj1xcsSM=
 github.com/cenkalti/backoff/v5 v5.0.3/go.mod h1:rkhZdG3JZukswDf7f0cwqPNk4K0sa+F97BxZthm/crw=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=

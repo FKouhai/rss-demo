@@ -18,14 +18,22 @@ import (
 	"github.com/FKouhai/rss-notify/methods"
 )
 
-func main() {
+func init() {
+	if err := bootstrap.WaitForLocator(); err != nil {
+		log.ErrorFmt("Locator service not available: %v", err)
+		return
+	}
+
 	serviceFQDN := os.Getenv("SERVICE_FQDN")
 	if serviceFQDN == "" {
 		serviceFQDN = "notify:3000"
 	}
 	if err := bootstrap.Init("notify", serviceFQDN); err != nil {
-		log.Error(err.Error())
+		log.ErrorFmt("Failed to register notify service with locator: %v", err)
 	}
+}
+
+func main() {
 	tp, err := instrumentation.InitTracer("notify")
 	if err != nil {
 		log.Error(err.Error())

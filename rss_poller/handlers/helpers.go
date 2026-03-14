@@ -23,6 +23,13 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+var notificationServiceURL string
+
+// SetNotificationServiceURL sets the notification service URL (called from main.go)
+func SetNotificationServiceURL(url string) {
+	notificationServiceURL = url
+}
+
 // internal discordNotification struct used to parse and send the payload that's compliant with the rss_notification service
 type discordNotification struct {
 	Content    []string `json:"feed_url"`
@@ -274,9 +281,8 @@ func pollAndNotify(t time.Time) {
 	// If there are new items, send a notification
 	if len(elementsToNotify) > 0 {
 		notificationReceiver := os.Getenv("NOTIFICATION_ENDPOINT")
-		notificationService := os.Getenv("NOTIFICATION_SENDER")
 
-		if notificationReceiver == "" || notificationService == "" {
+		if notificationReceiver == "" || notificationServiceURL == "" {
 			log.Error("Notification service is misconfigured, skipping notification.")
 		} else {
 			notify := discordNotification{
@@ -284,7 +290,7 @@ func pollAndNotify(t time.Time) {
 				WebHookURL: notificationReceiver,
 				Ctx:        cycleCtx, // Pass the context with the span
 			}
-			if _, err := notify.sendNotification(notificationService); err != nil {
+			if _, err := notify.sendNotification(notificationServiceURL); err != nil {
 				log.ErrorFmt("Failed to send notification: %v", err)
 			}
 		}

@@ -1,9 +1,9 @@
 schema = 3
 
 [mod]
-  [mod."github.com/FKouhai/rss-demo"]
-    version = "v0.0.0-20260314150840-c47157927748"
-    hash = "sha256-vb2BFDnV3Hu2yHBlUj1uqlhAucIVWSo0s2ciuIEaODY="
+  [mod.'github.com/FKouhai/rss-demo']
+    version = 'v0.0.0-20260314195115-2c1a6f1fb487'
+    hash = 'sha256-SgqQ5YKFzD+EeAwoTMxE5WRoUOX1PnOi1IlukW1/7qU='
   [mod."github.com/cenkalti/backoff/v5"]
     version = "v5.0.3"
     hash = "sha256-bKq43PPD8RM6e7HePxHaO27traqm76bkvHcTVTQ+jeY="
