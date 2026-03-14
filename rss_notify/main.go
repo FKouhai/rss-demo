@@ -9,14 +9,23 @@ package main
 import (
 	"context"
 	"net/http"
+	"os"
 	"time"
 
+	"github.com/FKouhai/rss-demo/libs/bootstrap"
 	"github.com/FKouhai/rss-demo/libs/instrumentation"
 	log "github.com/FKouhai/rss-demo/libs/logger"
 	"github.com/FKouhai/rss-notify/methods"
 )
 
 func main() {
+	serviceFQDN := os.Getenv("SERVICE_FQDN")
+	if serviceFQDN == "" {
+		serviceFQDN = "notify:3000"
+	}
+	if err := bootstrap.Init("notify", serviceFQDN); err != nil {
+		log.Error(err.Error())
+	}
 	tp, err := instrumentation.InitTracer("notify")
 	if err != nil {
 		log.Error(err.Error())
