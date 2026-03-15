@@ -161,32 +161,11 @@
           ];
         };
 
-        rss-locator = pkgsWithRust.rustPlatform.buildRustPackage {
-          pname = "rss-locator";
-          version = "0.1.0";
-          src = ./rss_locator;
-          cargoLock.lockFile = ./rss_locator/Cargo.lock;
-          buildType = "release";
+        rss-locator = callPackage ./rss_locator {
+          rustPlatform = pkgsWithRust.rustPlatform;
         };
 
-        rss-frontend = pkgs.buildNpmPackage {
-          pname = "rss-frontend";
-          version = "0.1.0";
-          src = ./rss_frontend;
-          npmDepsHash = "sha256-bNJ8ExoG2d/vuoC39UZKptrvEORaRGbpEi/rry06qv4=";
-          NODE_OPTIONS = "--openssl-legacy-provider";
-          buildPhase = ''
-            runHook preBuild
-            npm run build
-            runHook postBuild
-          '';
-          installPhase = ''
-            mkdir -p $out/dist
-            cp -r dist/* $out/dist
-            mkdir -p $out/node_modules
-            cp -r node_modules/* $out/node_modules
-          '';
-        };
+        rss-frontend = callPackage ./rss_frontend { };
 
         rss-poller-docker = mkDockerImage {
           name = "rss_poller";
