@@ -2,7 +2,7 @@
   pkgs ? (
     let
       inherit (builtins) fetchTree fromJSON readFile;
-      inherit ((fromJSON (readFile ./flake.lock)).nodes) nixpkgs gomod2nix;
+      inherit ((fromJSON (readFile ../flake.lock)).nodes) nixpkgs gomod2nix;
     in
     import (fetchTree nixpkgs.locked) {
       overlays = [
@@ -14,7 +14,7 @@
 }:
 
 buildGoModule (finalAttrs: {
-  pname = "rss-fetcher";
+  pname = "rss-poller";
   version = "0.1.0";
   pwd = ./.;
   src = ./.;

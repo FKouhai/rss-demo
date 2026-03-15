@@ -1,11 +1,11 @@
 ---
-name: "build locator container"
+name: "build config container"
 on:
   push:
     tags:
       - '*'
     paths:
-      - 'rss_locator/**'
+      - 'rss_config/**'
       - 'flake.nix'
       - 'flake.lock'
 env:
@@ -46,8 +46,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push container
         run: |
-          nix build .#packages.${{ matrix.system }}.rss-locator-docker --option sandbox true
+          nix build .#packages.${{ matrix.system }}.rss-config-docker --option sandbox true
           docker image load --input result
-          docker image tag rss_locator:latest ${{ env.REGISTRY }}/fkouhai/rss_locator-${{ matrix.system }}:${{ github.ref_name }}
+          docker image tag rss_config:latest ${{ env.REGISTRY }}/fkouhai/rss_config-${{ matrix.system }}:${{ github.ref_name }}
           docker image ls
-          docker push ${{ env.REGISTRY }}/fkouhai/rss_locator-${{ matrix.system }}:${{ github.ref_name }}
+          docker push ${{ env.REGISTRY }}/fkouhai/rss_config-${{ matrix.system }}:${{ github.ref_name }}

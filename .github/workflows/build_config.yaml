@@ -1,14 +1,14 @@
 ---
-name: "build locator"
+name: "build config"
 on:
   push:
     paths:
-      - 'rss_locator/**'
+      - 'rss_config/**'
       - 'flake.nix'
       - 'flake.lock'
   pull_request:
     paths:
-      - 'rss_locator/**'
+      - 'rss_config/**'
       - 'flake.nix'
       - 'flake.lock'
 jobs:
@@ -23,4 +23,4 @@ jobs:
           extra_nix_config: |
             sandbox = false
       - name: Build package
-        run: nix build .#rss-locator --option sandbox false
+        run: nix build .#rss-config --option sandbox false

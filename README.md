@@ -35,11 +35,22 @@ This repository contains the source code for the microservices responsible for h
      - Built and tested using Nix and Go modules.
 
 3. **rss_frontend**
-   - **Description**: Frontend service built with Astro.
-   - **Directory**: [rss_frontend](./rss_frontend)
-   - **Key Features**:
-     - Provides a user interface for interacting with the RSS services.
-     - Built using Nix and Astro, a modern frontend framework.
+    - **Description**: Frontend service built with Astro.
+    - **Directory**: [rss_frontend](./rss_frontend)
+    - **Key Features**:
+      - Provides a user interface for interacting with the RSS services.
+      - Built using Nix and Astro, a modern frontend framework.
+
+## Deprecated Services
+
+The following services are part of repository but are not currently used in active infrastructure:
+
+- **rss_config**
+  - **Description**: Configuration service that uses Valkey for storage
+  - **Status**: Deprecated - not running in arion-compose
+  - **Reason**: Configuration management moved to environment variables and service locator
+  - **Dependencies**: Relies on Valkey (also removed from infrastructure)
+  - **Note**: Service remains in repository for reference or future use
 
 ## Technologies Used
 
@@ -84,11 +95,10 @@ For easier local development and testing, this repository includes Arion configu
    nix-shell -p arion --run "arion up -d"
    ```
 
-3. Access the services:
-   - Frontend: http://localhost:4321
-   - RSS Poller API: http://localhost:3000
-   - RSS Notification Service: http://localhost:3001
-   - Valkey: localhost:6379
+  3. Access the services:
+    - Frontend: http://localhost:4321
+    - RSS Poller API: http://localhost:3000
+    - RSS Notification Service: http://localhost:3001
 
 4. View logs:
    ```bash

@@ -3,9 +3,11 @@ name: "build notify container"
 on:
   push:
     tags:
-    - '*'
-    paths: 
-     - 'rss_notify/*'
+      - '*'
+    paths:
+      - 'rss_notify/**'
+      - 'flake.nix'
+      - 'flake.lock'
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
@@ -42,9 +44,9 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - run: |
-          cd rss_notify
-          nix build --option sandbox true .#dockerImage.${{ matrix.system }}
+      - name: Build and push container
+        run: |
+          nix build .#packages.${{ matrix.system }}.rss-notify-docker --option sandbox true
           docker image load --input result
           docker image tag rss_notify:latest ${{ env.REGISTRY }}/fkouhai/rss_notify-${{ matrix.system }}:${{ github.ref_name }}
           docker image ls

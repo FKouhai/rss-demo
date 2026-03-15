@@ -1,18 +1,18 @@
 ---
-name: "build locator"
+name: "Lint and test PR's for config"
 on:
   push:
     paths:
-      - 'rss_locator/**'
+      - 'rss_config/**'
       - 'flake.nix'
       - 'flake.lock'
   pull_request:
     paths:
-      - 'rss_locator/**'
+      - 'rss_config/**'
       - 'flake.nix'
       - 'flake.lock'
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,5 +22,7 @@ jobs:
           nix_path: nixpkgs=channel:nixos-unstable
           extra_nix_config: |
             sandbox = false
-      - name: Build package
-        run: nix build .#rss-locator --option sandbox false
+      - name: Run tests
+        run: nix build .#checks.x86_64-linux.rss-config-test --option sandbox false
+      - name: Run lint
+        run: nix build .#checks.x86_64-linux.rss-config-lint --option sandbox false

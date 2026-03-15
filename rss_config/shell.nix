@@ -2,7 +2,7 @@
   pkgs ? (
     let
       inherit (builtins) fetchTree fromJSON readFile;
-      inherit ((fromJSON (readFile ./flake.lock)).nodes) nixpkgs gomod2nix;
+      inherit ((fromJSON (readFile ../flake.lock)).nodes) nixpkgs gomod2nix;
     in
     import (fetchTree nixpkgs.locked) {
       overlays = [
@@ -12,14 +12,18 @@
   ),
   mkGoEnv ? pkgs.mkGoEnv,
   gomod2nix ? pkgs.gomod2nix,
+  shellHook ? "",
+  enabledPackages ? [ ],
 }:
 
 let
   goEnv = mkGoEnv { pwd = ./.; };
 in
 pkgs.mkShell {
+  inherit shellHook;
   packages = [
     goEnv
     gomod2nix
-  ];
+  ]
+  ++ enabledPackages;
 }
