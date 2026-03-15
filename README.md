@@ -1,11 +1,14 @@
 [![build frontend](https://github.com/FKouhai/rss-demo/actions/workflows/build_frontend.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/build_frontend.yaml)
 [![build frontend container](https://github.com/FKouhai/rss-demo/actions/workflows/build_frontend_container.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/build_frontend_container.yaml)
-[![build notify](https://github.com/FKouhai/rss-demo/actions/workflows/build_notify.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/build_notify.yaml)[![build notify](https://github.com/FKouhai/rss-demo/actions/workflows/build_notify.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/build_notify.yaml)
+[![build notify](https://github.com/FKouhai/rss-demo/actions/workflows/build_notify.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/build_notify.yaml)
 [![build notify container](https://github.com/FKouhai/rss-demo/actions/workflows/build_notify_container.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/build_notify_container.yaml)
 [![build poller](https://github.com/FKouhai/rss-demo/actions/workflows/build_poller.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/build_poller.yaml)
 [![build poller container](https://github.com/FKouhai/rss-demo/actions/workflows/build_poller_container.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/build_poller_container.yaml)
+[![build locator](https://github.com/FKouhai/rss-demo/actions/workflows/build_locator.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/build_locator.yaml)
+[![build locator container](https://github.com/FKouhai/rss-demo/actions/workflows/build_locator_container.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/build_locator_container.yaml)
 [![Lint and test PR's for notify](https://github.com/FKouhai/rss-demo/actions/workflows/lint_and_test_notify.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/lint_and_test_notify.yaml)
 [![Lint and test PR's for poller](https://github.com/FKouhai/rss-demo/actions/workflows/lint_and_test_poller.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/lint_and_test_poller.yaml)
+[![Lint and test PR's for locator](https://github.com/FKouhai/rss-demo/actions/workflows/lint_and_test_locator.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/lint_and_test_locator.yaml)
 <h1 align="center">
   <div>
          <img href="https://builtwithnix.org" src="https://builtwithnix.org/badge.svg"/>
@@ -16,183 +19,131 @@
 
 ## Overview
 
-This repository contains the source code for the microservices responsible for handling RSS notifications, polling, and serving the frontend. The services are written in Go and Astro, and built with Nix.
+This repository contains the source code for the microservices responsible for handling RSS notifications, polling, service discovery, and serving the frontend. The services are written in Go, Rust, and Astro, and built with Nix using a consolidated monorepo flake.
 
 ## Services
 
-1. **rss_notify**
-   - **Description**: Notification service written in Go.
-   - **Directory**: [rss_notify](./rss_notify)
-   - **Key Features**:
-     - Handles sending notifications for RSS feeds.
-     - Built and tested using Nix and Go modules.
-
-2. **rss_poller**
-   - **Description**: Poller service written in Go.
-   - **Directory**: [rss_poller](./rss_poller)
-   - **Key Features**:
-     - Periodically polls RSS feeds to check for updates.
-     - Built and tested using Nix and Go modules.
-
-3. **rss_frontend**
-    - **Description**: Frontend service built with Astro.
-    - **Directory**: [rss_frontend](./rss_frontend)
-    - **Key Features**:
-      - Provides a user interface for interacting with the RSS services.
-      - Built using Nix and Astro, a modern frontend framework.
-
-## Deprecated Services
-
-The following services are part of repository but are not currently used in active infrastructure:
-
-- **rss_config**
-  - **Description**: Configuration service that uses Valkey for storage
-  - **Status**: Deprecated - not running in arion-compose
-  - **Reason**: Configuration management moved to environment variables and service locator
-  - **Dependencies**: Relies on Valkey (also removed from infrastructure)
-  - **Note**: Service remains in repository for reference or future use
+| Service | Language | Description |
+|---------|----------|-------------|
+| [rss_poller](./rss_poller) | Go | Periodically polls RSS feeds to check for updates |
+| [rss_notify](./rss_notify) | Go | Handles sending notifications for RSS feeds |
+| [rss_locator](./rss_locator) | Rust | Service registry for microservice discovery |
+| [rss_frontend](./rss_frontend) | Astro | User interface for interacting with RSS services |
+| [rss_config](./rss_config) | Go | Configuration service (deprecated) |
 
 ## Technologies Used
 
-- **Programming Languages**: Go, JavaScript (Astro)
-- **Build System**: Nix
-- **Containerization**: Docker
+- **Programming Languages**: Go, Rust, JavaScript (Astro)
+- **Build System**: Nix (consolidated monorepo flake)
+- **Containerization**: Docker (Nix-built layered images)
+- **Orchestration**: Arion (docker-compose via Nix)
 
-## Installation and Usage
+## Development
 
 ### Prerequisites
 
-- [Nix](https://nixos.org/download.html) installed on your system.
-- Basic knowledge of Nix, Go, and Astro.
+- [Nix](https://nixos.org/download.html) with flakes enabled
+- Docker (for container builds and orchestration)
 
-### Local Development with Arion
+### Development Shells
 
-For easier local development and testing, this repository includes Arion configuration files that allow you to run all services together with their dependencies.
+The repository provides context-aware development shells for each service. Enter a shell and run `devhelp` to see available commands specific to that service:
 
-#### Prerequisites for Arion
+```bash
+# Root shell (orchestration, all services overview)
+nix develop
 
-- [Nix](https://nixos.org/download.html) installed on your system
-- Docker installed and running
-- Arion installed (automatically available through Nix)
+# Go services
+nix develop .#rss_poller
+nix develop .#rss_notify
+nix develop .#rss_config
 
-#### Quick Start with Arion
+# Rust service
+nix develop .#rss_locator
 
-1. Build and load Docker images for all services:
-   ```bash
-   # In the rss_notify directory
-   nix run .#build-and-load-docker
-   
-   # In the rss_poller directory
-   nix run .#build-and-load-docker
-   
-   # In the rss_frontend directory
-   nix run .#build-and-load-docker
-   ```
+# Node.js/Astro frontend
+nix develop .#rss_frontend
+```
 
-2. Start all services with dependencies:
-   ```bash
-   # At the root of the repository
-   nix-shell -p arion --run "arion up -d"
-   ```
-
-  3. Access the services:
-    - Frontend: http://localhost:4321
-    - RSS Poller API: http://localhost:3000
-    - RSS Notification Service: http://localhost:3001
-
-4. View logs:
-   ```bash
-   nix-shell -p arion --run "arion logs -f"
-   ```
-
-5. Stop services:
-   ```bash
-   nix-shell -p arion --run "arion down"
-   ```
-
-#### Custom Shell Commands
-
-Each service includes a custom shell command to build and load its Docker image:
-
-- `nix run .#build-and-load-docker` - Build the Docker image and load it into Docker daemon
-
-This command simplifies the process of building and loading images during development.
+Each shell includes:
+- Language-specific tooling (Go, Rust/Cargo, or Node.js/npm)
+- Service-specific nix build commands
+- Pre-commit hooks
+- Commands to switch between shells
 
 ### Building Services
 
-To build any of the services, navigate to the respective directory and use the following command:
+Build individual services or all at once from the repository root:
 
-```sh
+```bash
+# Build individual services
+nix build .#rss-poller
+nix build .#rss-notify
+nix build .#rss-locator
+nix build .#rss-frontend
+
+# Build all services
 nix build
 ```
 
-This will create a development shell with all necessary dependencies.
+### Docker Images
 
-#### Example: Building `rss_notify`
+Build Docker images for deployment:
 
-1. Navigate to the `rss_notify` directory:
-   ```sh
-   cd rss_notify
-   ```
+```bash
+# Build container images
+nix build .#rss-poller-docker
+nix build .#rss-notify-docker
+nix build .#rss-locator-docker
+nix build .#rss-frontend-docker
 
-3. Build and test the service:
-   ```sh
-   nix flake check
-   nix build
-   ```
+# Build and load into local Docker daemon
+nix run .#build-and-load-poller
+nix run .#build-and-load-notify
+nix run .#build-and-load-locator
+nix run .#build-and-load-frontend
 
-#### Example: Building `rss_poller`
+# Build and load ALL images
+nix run .#build-and-load-all
+```
 
-1. Navigate to the `rss_frontend` directory:
-   ```sh
-   cd rss_poller
-   ```
+### Running Tests and Lints
 
-3. Build and test the microservice
-   ```sh
-   nix flake check
-   nix build
-   ```
+```bash
+# Run all checks (tests, lints, pre-commit)
+nix flake check
 
-#### Example: Building `rss_frontend`
+# Run specific checks
+nix build .#checks.x86_64-linux.rss-poller-test
+nix build .#checks.x86_64-linux.rss-poller-lint
+nix build .#checks.x86_64-linux.rss-notify-test
+nix build .#checks.x86_64-linux.rss-notify-lint
+nix build .#checks.x86_64-linux.pre-commit-check
+```
 
-1. Navigate to the `rss_frontend` directory:
-   ```sh
-   cd rss_frontend
-   ```
+### Local Development with Arion
 
-2. Build the frontend microservice
-   ```sh
-   nix build
-   ```
+Run all services together with their dependencies:
 
-### Running Services
+```bash
+# Enter root dev shell
+nix develop
 
-To run any of the services, you can either build and run a Docker image directly, or use the custom shell command to build and load the image.
+# Start all services
+arion up -d
 
-#### Option 1: Using Custom Shell Command (Recommended)
+# View logs
+arion logs -f
 
-Each service includes a custom shell command that builds and loads the Docker image:
+# Stop services
+arion down
+```
 
-1. Build and load the Docker image:
-   ```sh
-   nix run .#build-and-load-docker
-   ```
+#### Service Endpoints
 
-2. Run the Docker container:
-   ```sh
-   docker run --rm -p 3001:3000 -e OTEL_EP="localhost:4317" rss_notify:latest
-   ```
-
-#### Option 2: Manual Build and Run
-
-1. Build the Docker image:
-   ```sh
-   nix build .#dockerImage
-   docker load < result
-   ```
-
-2. Run the Docker container:
-   ```sh
-   docker run --rm -p 3001:3000 -e OTEL_EP="localhost:4317" rss_notify:latest
-   ```
+| Service | URL |
+|---------|-----|
+| Frontend | http://localhost:4321 |
+| Poller API | http://localhost:3000 |
+| Notify Service | http://localhost:3001 |
+| Locator Service | http://localhost:3002 |
