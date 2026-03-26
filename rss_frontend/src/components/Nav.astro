@@ -1,0 +1,42 @@
+---
+import { ModeToggle } from './ModeToggle';
+import { ThemeSelector } from './ThemeSelector';
+
+interface Props {
+  currentPage: 'feeds' | 'config' | 'status';
+}
+
+const { currentPage } = Astro.props;
+
+const links = [
+  { href: '/',       label: 'Feeds',     page: 'feeds'  },
+  { href: '/config', label: 'Configure', page: 'config' },
+  { href: '/status', label: 'Status',    page: 'status' },
+] as const;
+---
+
+<!-- Mobile/tablet: horizontal top bar — Desktop (lg+): fixed vertical sidebar -->
+<nav class="flex items-center justify-between px-4 py-3 border-b border-border bg-background/80 backdrop-blur-sm z-40 lg:fixed lg:inset-y-0 lg:left-0 lg:w-52 lg:flex-col lg:items-stretch lg:justify-start lg:border-r lg:border-b-0 lg:py-8 lg:px-3">
+  <div class="flex gap-6 lg:flex-col lg:gap-1 lg:flex-1">
+    <a href="/" class="hidden lg:block mb-4 px-3">
+      <span class="text-lg font-bold tracking-tight text-foreground">RSS Reader</span>
+      <span class="block text-xs text-muted-foreground mt-0.5">Your feeds, your way</span>
+    </a>
+    {links.map(({ href, label, page }) => (
+      <a
+        href={href}
+        class={`text-sm transition-colors lg:px-3 lg:py-2 lg:rounded-md ${
+          currentPage === page
+            ? 'font-medium text-foreground lg:bg-accent'
+            : 'text-muted-foreground hover:text-foreground lg:hover:bg-accent/60'
+        }`}
+      >
+        {label}
+      </a>
+    ))}
+  </div>
+  <div class="flex items-center gap-2 lg:flex-col lg:items-start lg:gap-3 lg:pb-2">
+    <ThemeSelector client:load />
+    <ModeToggle client:load />
+  </div>
+</nav>

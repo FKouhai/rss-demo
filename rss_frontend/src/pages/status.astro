@@ -1,0 +1,52 @@
+---
+import '../styles/global.css';
+import Nav from '../components/Nav.astro';
+import Status from '../components/Status.tsx';
+---
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Service Status</title>
+  <style>
+    #container {
+      font-family: Inter, Roboto, 'Helvetica Neue', 'Arial Nova', 'Nimbus Sans', Arial, sans-serif;
+      min-height: 100vh;
+    }
+
+    @media (min-width: 1024px) {
+      #container {
+        padding-left: 13rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <script is:inline>
+    const getThemePreference = () => {
+      if (typeof localStorage !== 'undefined' && localStorage.getItem('theme')) {
+        return localStorage.getItem('theme');
+      }
+      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    };
+    const isDark = getThemePreference() === 'dark';
+    document.documentElement.classList[isDark ? 'add' : 'remove']('dark');
+    const colorTheme = (typeof localStorage !== 'undefined' && localStorage.getItem('color-theme')) || 'slate';
+    document.documentElement.setAttribute('data-theme', colorTheme);
+    if (typeof localStorage !== 'undefined') {
+      const observer = new MutationObserver(() => {
+        const isDark = document.documentElement.classList.contains('dark');
+        localStorage.setItem('theme', isDark ? 'dark' : 'light');
+      });
+      observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    }
+  </script>
+  <div id="container">
+    <div id="background" aria-hidden="true"><div class="blob blob-1"></div><div class="blob blob-2"></div></div>
+    <Nav currentPage="status" />
+    <Status client:load />
+  </div>
+</body>
+</html>
