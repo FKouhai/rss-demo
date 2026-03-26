@@ -15,7 +15,9 @@ import (
 	"github.com/FKouhai/rss-demo/libs/instrumentation"
 	log "github.com/FKouhai/rss-demo/libs/logger"
 	"github.com/mmcdole/gofeed"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
@@ -51,23 +53,39 @@ var (
 
 // isRegistered does a single, fast check against the locator to verify a service is registered.
 // No retries — readiness probes must be fast and Kubernetes handles the retry cadence.
+// A child span is created and its context is injected as W3C traceparent headers so the
+// locator's RequestTracing middleware can parent its own spans to this trace.
 func isRegistered(ctx context.Context, locatorURL, service string) bool {
+	callCtx, span := instrumentation.GetTracer("poller").Start(ctx, "helper.isRegistered",
+		trace.WithSpanKind(trace.SpanKindClient))
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("locator.service", service),
+		attribute.String("locator.url", locatorURL),
+	)
+
 	body, err := json.Marshal(map[string]string{"service": service})
 	if err != nil {
+		span.RecordError(err)
 		return false
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+	req, err := http.NewRequestWithContext(callCtx, http.MethodPost,
 		fmt.Sprintf("%s/services", locatorURL), bytes.NewBuffer(body))
 	if err != nil {
+		span.RecordError(err)
 		return false
 	}
 	req.Header.Set("Content-Type", "application/json")
+	otel.GetTextMapPropagator().Inject(callCtx, propagation.HeaderCarrier(req.Header))
+
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
+		span.RecordError(err)
 		return false
 	}
 	defer resp.Body.Close()
+	span.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
 	return resp.StatusCode == http.StatusOK
 }
 
@@ -76,6 +94,11 @@ func isRegistered(ctx context.Context, locatorURL, service string) bool {
 func ReadyHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
+	ctx, span := instrumentation.GetTracer("poller").Start(r.Context(), "handlers.ReadyHandler",
+		trace.WithSpanKind(trace.SpanKindServer))
+	defer span.End()
+	log.Info("connection to /ready established", zap.String("trace_id", span.SpanContext().TraceID().String()))
+
 	locatorURL := os.Getenv("LOCATOR_URL")
 	if locatorURL == "" {
 		w.WriteHeader(http.StatusOK)
@@ -83,7 +106,6 @@ func ReadyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
 	if !isRegistered(ctx, locatorURL, "poller") {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		json.NewEncoder(w).Encode(map[string]string{"status": "not ready", "reason": "poller not registered with locator"})
@@ -114,13 +136,35 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	persistConfig(ctx)
 	startPolling()
 
 	span.SetAttributes(
 		attribute.Int("http.status", http.StatusOK),
 		attribute.String("http.method", "POST"),
+		attribute.Int("feeds.count", len(cfg.RSSFeeds)),
 	)
 	w.WriteHeader(http.StatusOK)
+}
+
+// ConfigGetHandler returns the feed URLs currently being polled.
+// The frontend uses this to stay in sync with the active config.
+func ConfigGetHandler(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	_, span := instrumentation.GetTracer("poller").Start(ctx, "handlers.ConfigGetHandler", trace.WithSpanKind(trace.SpanKindServer))
+	defer span.End()
+	log.Info("connection to GET /config/feeds established", zap.String("trace_id", span.SpanContext().TraceID().String()))
+
+	w.Header().Set("Content-Type", "application/json")
+	span.SetAttributes(
+		attribute.Int("http.status", http.StatusOK),
+		attribute.String("http.method", "GET"),
+		attribute.Int("feeds.count", len(cfg.RSSFeeds)),
+	)
+	if err := json.NewEncoder(w).Encode(cfg); err != nil {
+		span.RecordError(err)
+		w.WriteHeader(http.StatusInternalServerError)
+	}
 }
 
 // HealthzHandler is the route that exposes a healthcheck
@@ -151,7 +195,9 @@ func RSSHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	rctx, span := instrumentation.GetTracer("poller").Start(ctx, "handlers.RSSHandler", trace.WithSpanKind(trace.SpanKindServer))
 	defer span.End()
+	feedMutex.RLock()
 	feeds := globalFeed
+	feedMutex.RUnlock()
 	attributes := spanAttrs{
 		httpCode: attribute.Int("http.status", http.StatusOK),
 		method:   attribute.String("http.method", "GET"),

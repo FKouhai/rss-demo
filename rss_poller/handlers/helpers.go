@@ -25,9 +25,24 @@ import (
 
 var notificationServiceURL string
 
+var sharedHTTPClient = &http.Client{
+	Timeout: 10 * time.Second,
+	Transport: &http.Transport{
+		MaxIdleConns:        20,
+		MaxIdleConnsPerHost: 5,
+		IdleConnTimeout:     90 * time.Second,
+		DisableCompression:  false,
+	},
+}
+
 // SetNotificationServiceURL sets the notification service URL (called from main.go)
 func SetNotificationServiceURL(url string) {
 	notificationServiceURL = url
+}
+
+// NotificationServiceURL returns the currently configured notification service URL.
+func NotificationServiceURL() string {
+	return notificationServiceURL
 }
 
 // internal discordNotification struct used to parse and send the payload that's compliant with the rss_notification service
@@ -76,7 +91,7 @@ func (d *discordNotification) sendNotification(dst string) (int, error) {
 	// Inject the tracing context into the request headers
 	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
 
-	client := &http.Client{}
+	client := &http.Client{Timeout: 5 * time.Second}
 	res, err := client.Do(req)
 	if err != nil {
 		log.ErrorFmt("Failed to send request to notify service: %v", err)
@@ -148,6 +163,76 @@ func toJSON(w io.Writer, feeds []*gofeed.Feed) error {
 	return nil
 }
 
+func configFilePath() string {
+	if p := os.Getenv("CONFIG_FILE"); p != "" {
+		return p
+	}
+	return "/etc/rss-poller/config.json"
+}
+
+// LoadConfig reads feed URLs from the config file on startup.
+// If the file is absent it is a no-op; the service waits for POST /config.
+// If feeds are present, polling starts immediately.
+func LoadConfig(ctx context.Context) {
+	_, span := instrumentation.GetTracer("poller").Start(ctx, "bootstrap.LoadConfig",
+		trace.WithSpanKind(trace.SpanKindInternal))
+	defer span.End()
+
+	path := configFilePath()
+	span.SetAttributes(attribute.String("config.path", path))
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			log.Info("no config file found, waiting for POST /config")
+			return
+		}
+		span.RecordError(err)
+		log.ErrorFmt("failed to read config file: %v", err)
+		return
+	}
+
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		span.RecordError(err)
+		log.ErrorFmt("failed to parse config file: %v", err)
+		return
+	}
+
+	span.SetAttributes(attribute.Int("feeds.count", len(cfg.RSSFeeds)))
+	log.InfoFmt("loaded %d feeds from config file", len(cfg.RSSFeeds))
+
+	if len(cfg.RSSFeeds) > 0 {
+		startPolling()
+	}
+}
+
+// persistConfig writes the current cfg to the config file.
+// It is best-effort: failure is logged but does not surface to the caller
+// since ConfigMap mounts in Kubernetes are read-only by design.
+func persistConfig(ctx context.Context) {
+	_, span := instrumentation.GetTracer("poller").Start(ctx, "bootstrap.persistConfig",
+		trace.WithSpanKind(trace.SpanKindInternal))
+	defer span.End()
+
+	path := configFilePath()
+	span.SetAttributes(attribute.String("config.path", path))
+
+	data, err := json.Marshal(&cfg)
+	if err != nil {
+		span.RecordError(err)
+		return
+	}
+
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		span.RecordError(err)
+		log.InfoFmt("config file not writable (expected in Kubernetes): %v", err)
+		return
+	}
+
+	span.AddEvent("config persisted")
+	log.InfoFmt("persisted config to %s", path)
+}
+
 // ParseRSS returns the rss feed with all its items
 func ParseRSS(ctx context.Context, feedURL []string) ([]*gofeed.Feed, error) {
 	_, span := instrumentation.GetTracer("poller").Start(ctx, "helper.ParseRSS", trace.WithSpanKind(trace.SpanKindServer))
@@ -157,34 +242,46 @@ func ParseRSS(ctx context.Context, feedURL []string) ([]*gofeed.Feed, error) {
 
 	feeds := make([]*gofeed.Feed, len(feedURL))
 	eg, egCtx := errgroup.WithContext(ctx)
+	eg.SetLimit(10)
 
 	for i, v := range feedURL {
 		i, v := i, v // capture loop variables
 		eg.Go(func() error {
-			feedCtx, feedSpan := instrumentation.GetTracer("poller").Start(egCtx, "helper.ParseSingleFeed", trace.WithSpanKind(trace.SpanKindInternal))
+			feedCtx, feedCancel := context.WithTimeout(egCtx, 8*time.Second)
+			defer feedCancel()
+			_, feedSpan := instrumentation.GetTracer("poller").Start(feedCtx, "helper.ParseSingleFeed", trace.WithSpanKind(trace.SpanKindInternal))
 			feedSpan.SetAttributes(attribute.String("feed.url", v))
 			defer feedSpan.End()
 			feedParser := gofeed.NewParser()
+			feedParser.Client = sharedHTTPClient
 			feed, err := feedParser.ParseURLWithContext(v, feedCtx)
 			if err != nil {
 				span.AddEvent("FAILED_PROCESS_FEED")
-				span.RecordError(err)
-				log.Debug(err.Error())
-				return err
+				feedSpan.RecordError(err)
+				log.Debug("feed failed, skipping", zap.String("url", v), zap.Error(err))
+				return nil
 			}
 			feeds[i] = feed
 			return nil
 		})
 	}
 
-	if err := eg.Wait(); err != nil {
-		return nil, err
+	eg.Wait() // nolint:errcheck — individual feed errors are handled above
+
+	var parsed []*gofeed.Feed
+	for _, f := range feeds {
+		if f != nil {
+			parsed = append(parsed, f)
+		}
+	}
+	if len(parsed) == 0 && len(feedURL) > 0 {
+		return nil, errors.New("all feeds failed to parse")
 	}
 
-	span.SetAttributes(attribute.Int("feeds.parsed", len(feeds)))
+	span.SetAttributes(attribute.Int("feeds.parsed", len(parsed)))
 	span.AddEvent("got feed")
 	log.Info("got feed", zap.String("trace_id", span.SpanContext().TraceID().String()))
-	return feeds, nil
+	return parsed, nil
 }
 
 // diffie should return either an empty/nil slice or a slice that contains
@@ -278,21 +375,28 @@ func pollAndNotify(t time.Time) {
 	elementsToNotify := diffie(cycleCtx, globalFeed, newFeeds)
 	cycleSpan.SetAttributes(attribute.Int("new.items", len(elementsToNotify)))
 
-	// If there are new items, send a notification
+	// If there are new items, send a notification asynchronously so it does not
+	// delay updating globalFeed.
 	if len(elementsToNotify) > 0 {
 		notificationReceiver := os.Getenv("NOTIFICATION_ENDPOINT")
 
 		if notificationReceiver == "" || notificationServiceURL == "" {
 			log.Error("Notification service is misconfigured, skipping notification.")
 		} else {
+			// Build a detached context that carries cycleSpan as its active span
+			// but is not cancelled when pollAndNotify returns. This ensures
+			// sendNotification's child span is properly nested in the trace.
+			notifCtx := trace.ContextWithSpan(context.Background(), cycleSpan)
 			notify := discordNotification{
 				Content:    elementsToNotify,
 				WebHookURL: notificationReceiver,
-				Ctx:        cycleCtx, // Pass the context with the span
+				Ctx:        notifCtx,
 			}
-			if _, err := notify.sendNotification(notificationServiceURL); err != nil {
-				log.ErrorFmt("Failed to send notification: %v", err)
-			}
+			go func() {
+				if _, err := notify.sendNotification(notificationServiceURL); err != nil {
+					log.ErrorFmt("Failed to send notification: %v", err)
+				}
+			}()
 		}
 	}
 

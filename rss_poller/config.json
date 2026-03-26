@@ -1,0 +1,7 @@
+{
+  "rss_feeds": [
+    "https://feeds.arstechnica.com/arstechnica/index",
+    "https://www.reddit.com/r/kubernetes/.rss",
+    "https://determinate.systems/rss.xml"
+  ]
+}

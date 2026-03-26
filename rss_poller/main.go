@@ -11,7 +11,11 @@ import (
 	"github.com/FKouhai/rss-demo/libs/instrumentation"
 	log "github.com/FKouhai/rss-demo/libs/logger"
 	"github.com/FKouhai/rss-poller/handlers"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
+
+var serviceFQDN string
 
 func init() {
 	if err := bootstrap.WaitForLocator(); err != nil {
@@ -19,7 +23,7 @@ func init() {
 		return
 	}
 
-	serviceFQDN := os.Getenv("SERVICE_FQDN")
+	serviceFQDN = os.Getenv("SERVICE_FQDN")
 	if serviceFQDN == "" {
 		serviceFQDN = "poller:3000"
 	}
@@ -48,26 +52,63 @@ func discoverNotifyService() {
 	log.InfoFmt("Discovered notify service at: %s", notificationServiceURL)
 }
 
+func startHeartbeat(tracer trace.Tracer) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		ctx, span := tracer.Start(context.Background(), "bootstrap.heartbeat",
+			trace.WithSpanKind(trace.SpanKindInternal))
+		span.SetAttributes(attribute.String("service", "poller"))
+		if err := bootstrap.Init("poller", serviceFQDN); err != nil {
+			span.RecordError(err)
+			log.ErrorFmt("heartbeat re-registration failed: %v", err)
+		}
+		span.End()
+		_ = ctx
+	}
+}
+
 func main() {
 	tp, err := instrumentation.InitTracer("poller")
 	if err != nil {
 		log.Error(err.Error())
 	}
 	defer func() {
-		// Add a small delay to ensure traces are flushed before shutdown
 		time.Sleep(2 * time.Second)
 		if err := tp.Shutdown(context.Background()); err != nil {
 			log.Debug(err.Error())
 		}
 	}()
 
-	// Discover notify service in the background to give it time to register
+	tracer := instrumentation.GetTracer("poller")
+
+	// Load persisted config on startup; starts polling immediately if feeds are found.
+	handlers.LoadConfig(context.Background())
+
+	// Re-register with the locator on a heartbeat so a locator restart self-heals.
+	go startHeartbeat(tracer)
+
+	// Discover notify service in the background with retries, so a slow cluster
+	// start doesn't permanently break notifications.
 	go func() {
-		time.Sleep(5 * time.Second)
-		discoverNotifyService()
+		const maxAttempts = 10
+		backoff := 3 * time.Second
+		for i := range maxAttempts {
+			discoverNotifyService()
+			if handlers.NotificationServiceURL() != "" {
+				return
+			}
+			log.InfoFmt("notify service not yet discoverable, retrying in %v (attempt %d/%d)", backoff, i+1, maxAttempts)
+			time.Sleep(backoff)
+			if backoff < 30*time.Second {
+				backoff *= 2
+			}
+		}
+		log.Error("failed to discover notify service after all attempts; notifications will not be sent")
 	}()
 
 	http.HandleFunc("/config", handlers.ConfigHandler)
+	http.HandleFunc("/config/feeds", handlers.ConfigGetHandler)
 	http.HandleFunc("/healthz", handlers.HealthzHandler)
 	http.HandleFunc("/ready", handlers.ReadyHandler)
 	http.HandleFunc("/rss", handlers.RSSHandler)
