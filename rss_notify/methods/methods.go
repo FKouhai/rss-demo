@@ -2,9 +2,13 @@
 package methods
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"time"
 
 	"github.com/FKouhai/rss-demo/libs/instrumentation"
 	log "github.com/FKouhai/rss-demo/libs/logger"
@@ -15,6 +19,45 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
+
+// ReadyHandler returns 200 when notify is registered with the locator. Returns 503 otherwise.
+func ReadyHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	locatorURL := os.Getenv("LOCATOR_URL")
+	if locatorURL == "" {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ready", "note": "LOCATOR_URL not set, skipping registration check"})
+		return
+	}
+
+	body, err := json.Marshal(map[string]string{"service": "notify"})
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
+		fmt.Sprintf("%s/services", locatorURL), bytes.NewBuffer(body))
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"status": "not ready", "reason": "notify not registered with locator"})
+		return
+	}
+	resp.Body.Close()
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ready"})
+}
 
 // PushNotificationHandler is the handler that is in charge of sending notification to the destination sourceloggers
 func PushNotificationHandler(w http.ResponseWriter, r *http.Request) {

@@ -47,6 +47,7 @@ func main() {
 	}()
 	http.HandleFunc("/push", methods.PushNotificationHandler)
 	http.HandleFunc("/healthz", methods.HealthzHandler)
+	http.HandleFunc("/ready", methods.ReadyHandler)
 	log.InfoFmt("starting server on port %d", 3000)
 	// nolint
 	http.ListenAndServe(":3000", nil)

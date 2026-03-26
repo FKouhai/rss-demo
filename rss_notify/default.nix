@@ -12,13 +12,34 @@
   ),
   buildGoModule ? pkgs.buildGoModule,
 }:
+let
+  package = buildGoModule (
+    finalAttrs:
+    {
+      pname = "rss-notify";
+      version = "0.1.0";
+      pwd = ./.;
+      src = ./.;
+      modules = ./gomod2nix.toml;
+      vendorHash = "sha256-GTm+8r18HdE2qetpuRtxKN45nQXIFwLhJSRgdYTYk74=";
+      doCheck = false;
+    }
+    // pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
+      GOOS = "linux";
+      GOARCH = "arm64";
+      CGO_ENABLED = "0";
+      dontFixup = true;
+    }
+  );
 
-buildGoModule (finalAttrs: {
-  pname = "rss-notify";
-  version = "0.1.0";
-  pwd = ./.;
-  src = ./.;
-  vendorHash = "sha256-GTm+8r18HdE2qetpuRtxKN45nQXIFwLhJSRgdYTYk74=";
-  modules = ./gomod2nix.toml;
-  doCheck = false;
-})
+  dockerImage = pkgs.dockerTools.buildLayeredImage {
+    name = "rss_notify";
+    tag = "latest";
+    created = "now";
+    contents = [ pkgs.cacert ];
+    config.Cmd = [ "${package}/bin/rss-notify" ];
+  };
+in
+{
+  inherit package dockerImage;
+}
