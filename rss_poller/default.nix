@@ -2,33 +2,29 @@
   pkgs ? (
     let
       inherit (builtins) fetchTree fromJSON readFile;
-      inherit ((fromJSON (readFile ../flake.lock)).nodes) nixpkgs gomod2nix;
+      inherit ((fromJSON (readFile ../flake.lock)).nodes) nixpkgs;
     in
-    import (fetchTree nixpkgs.locked) {
-      overlays = [
-        (import "${fetchTree gomod2nix.locked}/overlay.nix")
-      ];
-    }
+    import (fetchTree nixpkgs.locked) { }
   ),
-  buildGoModule ? pkgs.buildGoModule,
+  # go-overlay injects buildGoWorkspace into pkgs when using pkgsWithGo.callPackage
+  buildGoWorkspace ? pkgs.buildGoWorkspace,
+  go ? pkgs.go,
 }:
 let
-  package = buildGoModule (
-    finalAttrs:
+  package = buildGoWorkspace (
     {
       pname = "rss-poller";
       version = "0.1.0";
-      pwd = ./.;
-      src = ./.;
-      modules = ./gomod2nix.toml;
-      vendorHash = "sha256-26PYzSZGDHS4uQr45HZSr+DxT/BrewvMO+5tBy/zXPc=";
+      src = ../.;
+      modules = ../govendor.toml;
+      inherit go;
+      subPackages = [ "rss_poller" ];
       doCheck = false;
     }
     // pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
       GOOS = "linux";
       GOARCH = "arm64";
       CGO_ENABLED = "0";
-      dontFixup = true;
     }
   );
 

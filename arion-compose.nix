@@ -30,6 +30,9 @@ _: {
       ports = [
         "3000:3000"
       ];
+      volumes = [
+        "./rss_poller/config.json:/etc/rss-poller/config.json:ro"
+      ];
       environment = {
         OTEL_EP = "jaeger:4317";
         NOTIFICATION_ENDPOINT = "https://discord.com/api/webhooks/1421594472923267084/207qADiqkjML0Vllr8SX9kF0hgN3piPRxx8pb4tcODcgn-W8VoIVNELfWo7-rTkPlj99";

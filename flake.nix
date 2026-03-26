@@ -5,12 +5,6 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
 
-    gomod2nix = {
-      url = "github:nix-community/gomod2nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-      inputs.flake-utils.follows = "flake-utils";
-    };
-
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -20,6 +14,11 @@
       url = "github:cachix/pre-commit-hooks.nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    go-overlay = {
+      url = "github:purpleclay/go-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -27,9 +26,9 @@
       self,
       nixpkgs,
       flake-utils,
-      gomod2nix,
       rust-overlay,
       git-hooks,
+      go-overlay,
     }:
     flake-utils.lib.eachDefaultSystem (
       system:
@@ -43,7 +42,16 @@
           overlays = [ (import rust-overlay) ];
         };
 
+        # Pkgs with go-overlay for pinned Go versions and buildGoWorkspace
+        pkgsWithGo = import nixpkgs {
+          inherit system;
+          overlays = [ go-overlay.overlays.default ];
+        };
+
         callPackage = pkgs.callPackage;
+
+        # govendor CLI — generates govendor.toml for workspace builds
+        govendor = go-overlay.packages.${system}.govendor;
 
         # On Darwin, used to pull linux/aarch64 container runtime deps (e.g. nodejs)
         # from the nixpkgs binary cache rather than compiling them.
@@ -122,8 +130,8 @@
             convco.enable = true;
 
             # Go
-            # rss_poller, rss_notify, and rss_config each have their own go.mod
-            # and are separate modules — exclude them from the root-module hooks.
+            # rss_poller and rss_notify each have their own go.mod and are separate
+            # modules — exclude them from the root-module hooks.
             # They are covered by nix flake check (rss-*-test / rss-*-lint checks).
             gofmt.enable = true;
             gotest = {
@@ -131,7 +139,6 @@
               excludes = [
                 "^rss_poller/"
                 "^rss_notify/"
-                "^rss_config/"
               ];
             };
             golangci-lint = {
@@ -139,21 +146,22 @@
               excludes = [
                 "^rss_poller/"
                 "^rss_notify/"
-                "^rss_config/"
               ];
             };
           };
         };
 
-        rss-poller-out = callPackage ./rss_poller { };
+        # Derive the pinned Go toolchain for each service from its go.mod.
+        # go-overlay resolves the latest patch of the declared go directive.
+        pollerGo = pkgsWithGo.go-bin.fromGoMod ./rss_poller/go.mod;
+        notifyGo = pkgsWithGo.go-bin.fromGoMod ./rss_notify/go.mod;
+
+        # Use pkgsWithGo.callPackage so buildGoWorkspace is auto-injected from the overlay
+        rss-poller-out = pkgsWithGo.callPackage ./rss_poller { go = pollerGo; };
         rss-poller = rss-poller-out.package;
         rss-poller-docker = rss-poller-out.dockerImage;
 
-        rss-config-out = callPackage ./rss_config { };
-        rss-config = rss-config-out.package;
-        rss-config-docker = rss-config-out.dockerImage;
-
-        rss-notify-out = callPackage ./rss_notify { };
+        rss-notify-out = pkgsWithGo.callPackage ./rss_notify { go = notifyGo; };
         rss-notify = rss-notify-out.package;
         rss-notify-docker = rss-notify-out.dockerImage;
 
@@ -211,8 +219,9 @@
               echo "  go test ./...               Run tests"
               echo "  go test -v ./...            Run tests (verbose)"
               echo "  go mod tidy                 Tidy go.mod"
+              echo "  go work sync                Sync go.work.sum"
               echo "  golangci-lint run           Run linter"
-              echo "  gomod2nix                   Update gomod2nix.toml"
+              echo "  govendor                    Regenerate govendor.toml"
               echo ""
             '';
 
@@ -247,9 +256,12 @@
               echo "  arion up -d                 Start services in background"
               echo "  arion logs -f               Follow service logs"
               echo ""
+              echo "Workspace:"
+              echo "  go work sync                Sync go.work.sum"
+              echo "  govendor                    Regenerate govendor.toml"
+              echo ""
               echo "Build All Packages:"
               echo "  nix build .#rss-poller      Build the poller service"
-              echo "  nix build .#rss-config      Build the config service"
               echo "  nix build .#rss-notify      Build the notify service"
               echo "  nix build .#rss-locator     Build the locator service (Rust)"
               echo "  nix build .#rss-frontend    Build the frontend (Node.js)"
@@ -257,7 +269,6 @@
               echo ""
               echo "Build All Docker Images:"
               echo "  nix build .#rss-poller-docker     Build poller container"
-              echo "  nix build .#rss-config-docker     Build config container"
               echo "  nix build .#rss-notify-docker     Build notify container"
               echo "  nix build .#rss-locator-docker    Build locator container"
               echo "  nix build .#rss-frontend-docker   Build frontend container"
@@ -298,12 +309,6 @@
               ${
                 if currentShell != "poller" then
                   ''echo "  nix develop .#rss_poller    Enter poller dev environment (Go)"''
-                else
-                  ""
-              }
-              ${
-                if currentShell != "config" then
-                  ''echo "  nix develop .#rss_config    Enter config dev environment (Go)"''
                 else
                   ""
               }
@@ -389,7 +394,6 @@
         packages = {
           inherit
             rss-poller
-            rss-config
             rss-notify
             rss-locator
             rss-frontend
@@ -397,7 +401,6 @@
 
           # Docker images
           rss-poller-docker = rss-poller-docker;
-          rss-config-docker = rss-config-docker;
           rss-notify-docker = rss-notify-docker;
           rss-locator-docker = rss-locator-docker;
           rss-frontend-docker = rss-frontend-docker;
@@ -407,7 +410,6 @@
             name = "all-services";
             paths = [
               rss-poller
-              rss-config
               rss-notify
               rss-locator
               rss-frontend
@@ -416,11 +418,12 @@
         };
 
         devShells = {
-          # Go service shells
-          rss_poller = callPackage ./rss_poller/shell.nix {
-            inherit (gomod2nix.legacyPackages.${system}) mkGoEnv gomod2nix;
+          # Go service shells — Go version is derived from each service's go.mod
+          rss_poller = pkgsWithGo.callPackage ./rss_poller/shell.nix {
+            go = pollerGo;
             shellHook = mkShellHook pre-commit-check.shellHook;
             enabledPackages = pre-commit-check.enabledPackages ++ [
+              govendor
               (mkDevHelp {
                 serviceName = "poller";
                 serviceType = "go";
@@ -428,21 +431,11 @@
             ];
           };
 
-          rss_config = callPackage ./rss_config/shell.nix {
-            inherit (gomod2nix.legacyPackages.${system}) mkGoEnv gomod2nix;
+          rss_notify = pkgsWithGo.callPackage ./rss_notify/shell.nix {
+            go = notifyGo;
             shellHook = mkShellHook pre-commit-check.shellHook;
             enabledPackages = pre-commit-check.enabledPackages ++ [
-              (mkDevHelp {
-                serviceName = "config";
-                serviceType = "go";
-              })
-            ];
-          };
-
-          rss_notify = callPackage ./rss_notify/shell.nix {
-            inherit (gomod2nix.legacyPackages.${system}) mkGoEnv gomod2nix;
-            shellHook = mkShellHook pre-commit-check.shellHook;
-            enabledPackages = pre-commit-check.enabledPackages ++ [
+              govendor
               (mkDevHelp {
                 serviceName = "notify";
                 serviceType = "go";
@@ -489,21 +482,20 @@
               ++ pre-commit-check.enabledPackages;
           };
 
-          # Root dev shell with arion and pre-commit
+          # Root dev shell with arion, pre-commit, and govendor for workspace management
           default = pkgs.mkShell {
             shellHook = mkShellHook pre-commit-check.shellHook;
-            buildInputs =
-              with pkgs;
-              [
-                arion
-                docker-compose
-                nixfmt-rfc-style
-                (mkDevHelp {
-                  serviceName = "root";
-                  serviceType = "root";
-                })
-              ]
-              ++ pre-commit-check.enabledPackages;
+            buildInputs = [
+              pkgs.arion
+              pkgs.docker-compose
+              pkgs.nixfmt-rfc-style
+              govendor
+              (mkDevHelp {
+                serviceName = "root";
+                serviceType = "root";
+              })
+            ]
+            ++ pre-commit-check.enabledPackages;
           };
         };
 
@@ -515,10 +507,6 @@
             name = "rss-poller";
             src = ./rss_poller;
           };
-          rss-config-test = mkGoTest {
-            name = "rss-config";
-            src = ./rss_config;
-          };
           rss-notify-test = mkGoTest {
             name = "rss-notify";
             src = ./rss_notify;
@@ -528,10 +516,6 @@
           rss-poller-lint = mkGoLint {
             name = "rss-poller";
             src = ./rss_poller;
-          };
-          rss-config-lint = mkGoLint {
-            name = "rss-config";
-            src = ./rss_config;
           };
           rss-notify-lint = mkGoLint {
             name = "rss-notify";
@@ -543,10 +527,6 @@
           build-and-load-poller = mkDockerApp {
             name = "rss-poller";
             imageName = "rss_poller";
-          };
-          build-and-load-config = mkDockerApp {
-            name = "rss-config";
-            imageName = "rss_config";
           };
           build-and-load-notify = mkDockerApp {
             name = "rss-notify";
@@ -566,7 +546,6 @@
             program = "${pkgs.writeShellScriptBin "build-and-load-all" ''
               echo "Building and loading all Docker images..."
               nix build .#rss-poller-docker && docker load < result && echo "Loaded rss_poller:latest"
-              nix build .#rss-config-docker && docker load < result && echo "Loaded rss_config:latest"
               nix build .#rss-notify-docker && docker load < result && echo "Loaded rss_notify:latest"
               nix build .#rss-locator-docker && docker load < result && echo "Loaded rss_locator:latest"
               nix build .#rss-frontend-docker && docker load < result && echo "Loaded rss_frontend:latest"
