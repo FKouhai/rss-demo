@@ -1,21 +1,23 @@
 import { useState, useEffect, useRef } from 'preact/hooks';
 
-const STORAGE_KEY = 'rss-feed-config';
-
 type Status = { ok: true } | { ok: false; error: string } | null;
 
 const ConfigPage = () => {
   const [feeds, setFeeds] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
   const [inputValue, setInputValue] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [status, setStatus] = useState<Status>(null);
   const statusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) setFeeds(JSON.parse(stored));
-    } catch {}
+    fetch('/api/config')
+      .then(r => r.json())
+      .then((data: { rss_feeds?: string[] }) => {
+        if (data.rss_feeds?.length) setFeeds(data.rss_feeds);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, []);
 
   const showStatus = (s: Status) => {
@@ -65,7 +67,6 @@ const ConfigPage = () => {
       if (!res.ok) {
         showStatus({ ok: false, error: data.error ?? `Error ${res.status}` });
       } else {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(feeds));
         showStatus({ ok: true });
       }
     } catch {
@@ -99,7 +100,9 @@ const ConfigPage = () => {
         </button>
       </div>
 
-      {feeds.length === 0 ? (
+      {loading ? (
+        <p className="text-sm text-muted-foreground py-8 text-center">Loading current feeds from poller…</p>
+      ) : feeds.length === 0 ? (
         <p className="text-sm text-muted-foreground py-8 text-center border border-dashed rounded-md">
           No feeds configured. Add a URL above.
         </p>
@@ -132,7 +135,7 @@ const ConfigPage = () => {
 
       <button
         onClick={handleSubmit}
-        disabled={submitting || feeds.length === 0}
+        disabled={submitting || feeds.length === 0 || loading}
         className="w-full rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-medium shadow hover:bg-primary/90 transition-colors disabled:pointer-events-none disabled:opacity-50"
       >
         {submitting ? 'Saving...' : 'Save & Apply'}
