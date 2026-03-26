@@ -16,7 +16,11 @@ import (
 	"github.com/FKouhai/rss-demo/libs/instrumentation"
 	log "github.com/FKouhai/rss-demo/libs/logger"
 	"github.com/FKouhai/rss-notify/methods"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
+
+var serviceFQDN string
 
 func init() {
 	if err := bootstrap.WaitForLocator(); err != nil {
@@ -24,12 +28,28 @@ func init() {
 		return
 	}
 
-	serviceFQDN := os.Getenv("SERVICE_FQDN")
+	serviceFQDN = os.Getenv("SERVICE_FQDN")
 	if serviceFQDN == "" {
 		serviceFQDN = "notify:3000"
 	}
 	if err := bootstrap.Init("notify", serviceFQDN); err != nil {
 		log.ErrorFmt("Failed to register notify service with locator: %v", err)
+	}
+}
+
+func startHeartbeat(tracer trace.Tracer) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		ctx, span := tracer.Start(context.Background(), "bootstrap.heartbeat",
+			trace.WithSpanKind(trace.SpanKindInternal))
+		span.SetAttributes(attribute.String("service", "notify"))
+		if err := bootstrap.Init("notify", serviceFQDN); err != nil {
+			span.RecordError(err)
+			log.ErrorFmt("heartbeat re-registration failed: %v", err)
+		}
+		span.End()
+		_ = ctx
 	}
 }
 
@@ -45,6 +65,12 @@ func main() {
 			log.Debug(err.Error())
 		}
 	}()
+
+	tracer := instrumentation.GetTracer("notify")
+
+	// Re-register with the locator on a heartbeat so a locator restart self-heals.
+	go startHeartbeat(tracer)
+
 	http.HandleFunc("/push", methods.PushNotificationHandler)
 	http.HandleFunc("/healthz", methods.HealthzHandler)
 	http.HandleFunc("/ready", methods.ReadyHandler)

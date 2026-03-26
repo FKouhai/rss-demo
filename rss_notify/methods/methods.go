@@ -24,6 +24,11 @@ import (
 func ReadyHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
+	ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+	ctx, span := instrumentation.GetTracer("notify").Start(ctx, "handlers.ReadyHandler", trace.WithSpanKind(trace.SpanKindServer))
+	defer span.End()
+	log.Info("connection to /ready established", zap.String("trace_id", span.SpanContext().TraceID().String()))
+
 	locatorURL := os.Getenv("LOCATOR_URL")
 	if locatorURL == "" {
 		w.WriteHeader(http.StatusOK)
@@ -33,28 +38,34 @@ func ReadyHandler(w http.ResponseWriter, r *http.Request) {
 
 	body, err := json.Marshal(map[string]string{"service": "notify"})
 	if err != nil {
+		span.RecordError(err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		fmt.Sprintf("%s/services", locatorURL), bytes.NewBuffer(body))
 	if err != nil {
+		span.RecordError(err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
+	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
+
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		if resp != nil {
 			resp.Body.Close()
 		}
+		span.SetAttributes(attribute.Int("http.status_code", http.StatusServiceUnavailable))
 		w.WriteHeader(http.StatusServiceUnavailable)
 		json.NewEncoder(w).Encode(map[string]string{"status": "not ready", "reason": "notify not registered with locator"})
 		return
 	}
 	resp.Body.Close()
 
+	span.SetAttributes(attribute.Int("http.status_code", http.StatusOK))
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"status": "ready"})
 }

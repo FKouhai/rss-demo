@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/FKouhai/rss-demo/libs/instrumentation"
 	log "github.com/FKouhai/rss-demo/libs/logger"
@@ -65,14 +66,14 @@ func (d *DiscordNotification) SendNotification(ctx context.Context, message []st
 		return 0, err
 	}
 	r := bytes.NewBuffer(m)
-	req, err := http.NewRequest("POST", d.WebHookURL, r)
+	req, err := http.NewRequestWithContext(ctx, "POST", d.WebHookURL, r)
 	if err != nil {
 		span.RecordError(err)
 		log.Info("Failed to make request")
 		return 0, err
 	}
 	req.Header.Add("Content-Type", "application/json")
-	client := &http.Client{}
+	client := &http.Client{Timeout: 10 * time.Second}
 	res, err := client.Do(req)
 	if err != nil {
 		span.RecordError(err)
