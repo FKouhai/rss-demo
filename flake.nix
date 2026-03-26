@@ -43,8 +43,12 @@
           overlays = [ (import rust-overlay) ];
         };
 
-        # macOS compatibility helper
-        callPackage = pkgs.darwin.apple_sdk_11_0.callPackage or pkgs.callPackage;
+        callPackage = pkgs.callPackage;
+
+        # On Darwin, used to pull linux/aarch64 container runtime deps (e.g. nodejs)
+        # from the nixpkgs binary cache rather than compiling them.
+        linuxPkgs = if pkgs.stdenv.isDarwin then pkgs.pkgsCross.aarch64-multiplatform else pkgs;
+
         mkGoTest =
           {
             name,
@@ -92,30 +96,6 @@
             '';
           };
 
-        # Create a Docker image for a package
-        mkDockerImage =
-          {
-            name,
-            pkg,
-            binName ? name,
-            extraContents ? [ ],
-            extraConfig ? { },
-          }:
-          pkgs.dockerTools.buildLayeredImage {
-            inherit name;
-            tag = "latest";
-            created = "now";
-            contents = [
-              pkgs.cacert
-              pkgs.openssl
-            ]
-            ++ extraContents;
-            config = {
-              Cmd = [ "${pkg}/bin/${binName}" ];
-            }
-            // extraConfig;
-          };
-
         # Create a docker build-and-load app
         mkDockerApp =
           {
@@ -142,17 +122,40 @@
             convco.enable = true;
 
             # Go
+            # rss_poller, rss_notify, and rss_config each have their own go.mod
+            # and are separate modules — exclude them from the root-module hooks.
+            # They are covered by nix flake check (rss-*-test / rss-*-lint checks).
             gofmt.enable = true;
-            gotest.enable = true;
-            golangci-lint.enable = true;
+            gotest = {
+              enable = true;
+              excludes = [
+                "^rss_poller/"
+                "^rss_notify/"
+                "^rss_config/"
+              ];
+            };
+            golangci-lint = {
+              enable = true;
+              excludes = [
+                "^rss_poller/"
+                "^rss_notify/"
+                "^rss_config/"
+              ];
+            };
           };
         };
 
-        rss-poller = callPackage ./rss_poller { };
+        rss-poller-out = callPackage ./rss_poller { };
+        rss-poller = rss-poller-out.package;
+        rss-poller-docker = rss-poller-out.dockerImage;
 
-        rss-config = callPackage ./rss_config { };
+        rss-config-out = callPackage ./rss_config { };
+        rss-config = rss-config-out.package;
+        rss-config-docker = rss-config-out.dockerImage;
 
-        rss-notify = callPackage ./rss_notify { };
+        rss-notify-out = callPackage ./rss_notify { };
+        rss-notify = rss-notify-out.package;
+        rss-notify-docker = rss-notify-out.dockerImage;
 
         rustToolchain = pkgsWithRust.rust-bin.stable.latest.default.override {
           extensions = [
@@ -161,58 +164,16 @@
           ];
         };
 
-        rss-locator = callPackage ./rss_locator {
+        rss-locator-out = callPackage ./rss_locator {
+          inherit pkgsWithRust;
           rustPlatform = pkgsWithRust.rustPlatform;
         };
+        rss-locator = rss-locator-out.package;
+        rss-locator-docker = rss-locator-out.dockerImage;
 
-        rss-frontend = callPackage ./rss_frontend { };
-
-        rss-poller-docker = mkDockerImage {
-          name = "rss_poller";
-          pkg = rss-poller;
-          binName = "rss-poller";
-        };
-
-        rss-config-docker = mkDockerImage {
-          name = "rss_config";
-          pkg = rss-config;
-          binName = "rss-config";
-        };
-
-        rss-notify-docker = mkDockerImage {
-          name = "rss_notify";
-          pkg = rss-notify;
-          binName = "rss-notify";
-        };
-
-        rss-locator-docker = pkgs.dockerTools.buildLayeredImage {
-          name = "rss_locator";
-          tag = "latest";
-          created = "now";
-          contents = [ pkgs.cacert ];
-          config = {
-            Cmd = [ "${rss-locator}/bin/rss_locator" ];
-          };
-        };
-
-        rss-frontend-docker = pkgs.dockerTools.buildLayeredImage {
-          name = "rss_frontend";
-          tag = "latest";
-          created = "now";
-          contents = [
-            pkgs.nodejs
-            pkgs.cacert
-            pkgs.openssl
-            rss-frontend
-          ];
-          config = {
-            Cmd = [
-              "${pkgs.nodejs}/bin/node"
-              "${rss-frontend}/dist/server/entry.mjs"
-            ];
-            Env = [ "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt" ];
-          };
-        };
+        rss-frontend-out = callPackage ./rss_frontend { inherit linuxPkgs; };
+        rss-frontend = rss-frontend-out.package;
+        rss-frontend-docker = rss-frontend-out.dockerImage;
 
         install_astro = pkgs.writeShellApplication {
           name = "install_astro";
