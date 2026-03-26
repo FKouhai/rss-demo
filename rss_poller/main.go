@@ -69,6 +69,7 @@ func main() {
 
 	http.HandleFunc("/config", handlers.ConfigHandler)
 	http.HandleFunc("/healthz", handlers.HealthzHandler)
+	http.HandleFunc("/ready", handlers.ReadyHandler)
 	http.HandleFunc("/rss", handlers.RSSHandler)
 	log.InfoFmt("starting server on port %d", 3000)
 	// nolint

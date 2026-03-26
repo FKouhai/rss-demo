@@ -303,20 +303,29 @@ func pollAndNotify(t time.Time) {
 }
 
 // startPolling initializes and runs the background poller goroutine.
+// Cancels any previously running poller before starting a new one.
 func startPolling() {
-	log.Info("Started long poller")
+	if cancelFn != nil {
+		cancelFn()
+	}
+	if ticker != nil {
+		ticker.Stop()
+	}
+
 	ticker = time.NewTicker(30 * time.Second)
+	localTicker := ticker
 	pollCtx, cancel := context.WithCancel(context.Background())
 	cancelFn = cancel
 
 	go func() {
+		log.Info("Started long poller")
 		for {
 			select {
 			case <-pollCtx.Done():
 				log.Info("Stopped polling")
-				ticker.Stop()
+				localTicker.Stop()
 				return
-			case t := <-ticker.C:
+			case t := <-localTicker.C:
 				pollAndNotify(t)
 			}
 		}

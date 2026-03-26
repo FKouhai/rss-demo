@@ -2,9 +2,12 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
 	"sync"
 
 	"time"
@@ -45,6 +48,56 @@ var (
 	// nolint:unused // This variable is assigned in helpers.go and used for cleanup
 	cancelFn context.CancelFunc
 )
+
+// isRegistered does a single, fast check against the locator to verify a service is registered.
+// No retries — readiness probes must be fast and Kubernetes handles the retry cadence.
+func isRegistered(ctx context.Context, locatorURL, service string) bool {
+	body, err := json.Marshal(map[string]string{"service": service})
+	if err != nil {
+		return false
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		fmt.Sprintf("%s/services", locatorURL), bytes.NewBuffer(body))
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
+}
+
+// ReadyHandler returns 200 when the poller is registered with the locator and its
+// notify dependency is also registered. Returns 503 otherwise.
+func ReadyHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	locatorURL := os.Getenv("LOCATOR_URL")
+	if locatorURL == "" {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ready", "note": "LOCATOR_URL not set, skipping registration check"})
+		return
+	}
+
+	ctx := r.Context()
+	if !isRegistered(ctx, locatorURL, "poller") {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"status": "not ready", "reason": "poller not registered with locator"})
+		return
+	}
+	if !isRegistered(ctx, locatorURL, "notify") {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"status": "not ready", "reason": "notify dependency not registered"})
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ready"})
+}
 
 // ConfigHandler reads the config sent via json and stores it in memory
 // It also starts a new background poller with the new configuration.
