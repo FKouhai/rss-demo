@@ -33,7 +33,6 @@ async fn main() -> std::io::Result<()> {
         e
     })?;
 
-    //sleep(Duration::from_secs(2)).await;
     eprintln!("Tracer provider shutdown skipped");
     Ok(())
 }
