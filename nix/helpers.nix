@@ -86,7 +86,6 @@ in
   inherit
     mkGoTest
     mkGoLint
-    mkGoVulnCheck
     mkShellHook
     inferServiceType
     pre-commit-check
