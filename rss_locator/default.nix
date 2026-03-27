@@ -2,6 +2,7 @@
   pkgs ? import <nixpkgs> { },
   pkgsWithRust ? pkgs,
   rustPlatform ? pkgsWithRust.rustPlatform,
+  nix2containerPkg ? null,
 }:
 let
   isDarwin = pkgs.stdenv.isDarwin;
@@ -56,12 +57,17 @@ let
     }
   );
 
-  dockerImage = pkgs.dockerTools.buildLayeredImage {
+  dockerImage = nix2containerPkg.buildImage {
     name = "rss_locator";
     tag = "latest";
-    created = "now";
-    contents = [ pkgs.cacert ];
-    config.Cmd = [ "${package}/bin/rss_locator" ];
+    config = {
+      cmd = [ "${package}/bin/rss_locator" ];
+      Env = [ "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt" ];
+    };
+    layers = [
+      (nix2containerPkg.buildLayer { deps = [ pkgs.cacert ]; })
+      (nix2containerPkg.buildLayer { deps = [ package ]; })
+    ];
   };
 in
 {

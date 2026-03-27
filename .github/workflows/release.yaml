@@ -50,14 +50,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - run: nix build .#${{ matrix.service }} --option sandbox false
+      - name: Set lowercase owner
+        run: echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+
       - name: Build ${{ matrix.service }} image
         run: |
           IMAGE="${{ matrix.service }}"
           IMAGE="${IMAGE//-/_}"
           echo "image=${IMAGE}" >> "$GITHUB_ENV"
-          nix build .#packages.${{ matrix.config.system }}.${{ matrix.service }}-docker
-          docker image load --input result
+          nix build .#packages.${{ matrix.config.system }}.${{ matrix.service }}-docker.copyToDockerDaemon
+          ./result/bin/copy-to-docker-daemon
 
       - name: Scan image for vulnerabilities
         uses: aquasecurity/trivy-action@0.35.0
@@ -72,6 +74,6 @@ jobs:
       - name: Push ${{ matrix.service }} image
         run: |
           docker image tag "${{ env.image }}:latest" \
-            "${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.image }}-${{ matrix.config.system }}:${{ github.ref_name }}"
+            "${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.image }}-${{ matrix.config.system }}:${{ github.ref_name }}"
           docker push \
-            "${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.image }}-${{ matrix.config.system }}:${{ github.ref_name }}"
+            "${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.image }}-${{ matrix.config.system }}:${{ github.ref_name }}"

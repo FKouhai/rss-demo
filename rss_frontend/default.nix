@@ -4,6 +4,7 @@
   # On Darwin, pass pkgs.pkgsCross.aarch64-multiplatform so the container gets
   # a linux/aarch64 node binary. On Linux this defaults to pkgs (native).
   linuxPkgs ? pkgs,
+  nix2containerPkg ? null,
 }:
 let
   package = buildNpmPackage {
@@ -28,23 +29,26 @@ let
     '';
   };
 
-  dockerImage = pkgs.dockerTools.buildLayeredImage {
+  dockerImage = nix2containerPkg.buildImage {
     name = "rss_frontend";
     tag = "latest";
-    created = "now";
-    contents = [
-      linuxPkgs.nodejs
-      linuxPkgs.cacert
-      linuxPkgs.openssl
-      package
-    ];
     config = {
-      Cmd = [
+      cmd = [
         "${linuxPkgs.nodejs}/bin/node"
         "${package}/dist/server/entry.mjs"
       ];
       Env = [ "SSL_CERT_FILE=${linuxPkgs.cacert}/etc/ssl/certs/ca-bundle.crt" ];
     };
+    layers = [
+      (nix2containerPkg.buildLayer {
+        deps = [
+          linuxPkgs.nodejs
+          linuxPkgs.cacert
+          linuxPkgs.openssl
+        ];
+      })
+      (nix2containerPkg.buildLayer { deps = [ package ]; })
+    ];
   };
 in
 {

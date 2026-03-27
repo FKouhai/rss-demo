@@ -21,6 +21,8 @@
       inputs.flake-utils.follows = "flake-utils";
       inputs.git-hooks.follows = "git-hooks";
     };
+
+    nix2container.url = "github:nlewo/nix2container";
   };
 
   outputs =
@@ -31,6 +33,7 @@
       rust-overlay,
       git-hooks,
       go-overlay,
+      nix2container,
     }:
     flake-utils.lib.eachDefaultSystem (
       system:
@@ -77,9 +80,16 @@
 
         # Extend the combined package set with cross-cutting service args so
         # callPackage injects only what each default.nix/shell.nix declares.
+        nix2containerPkg = nix2container.packages.${system}.nix2container;
+
         servicePkgs = pkgs.extend (
           _: _: {
-            inherit linuxPkgs workspaceGo govendor;
+            inherit
+              linuxPkgs
+              workspaceGo
+              govendor
+              nix2containerPkg
+              ;
             go = workspaceGo;
             pkgsWithRust = pkgs; # rust-overlay is already in pkgs
             rustPlatform = pkgs.rustPlatform;

@@ -9,6 +9,7 @@
   # go-overlay injects buildGoWorkspace into pkgs when using pkgsWithGo.callPackage
   buildGoWorkspace ? pkgs.buildGoWorkspace,
   go ? pkgs.go,
+  nix2containerPkg ? null,
 }:
 let
   package = buildGoWorkspace (
@@ -28,12 +29,17 @@ let
     }
   );
 
-  dockerImage = pkgs.dockerTools.buildLayeredImage {
+  dockerImage = nix2containerPkg.buildImage {
     name = "rss_notify";
     tag = "latest";
-    created = "now";
-    contents = [ pkgs.cacert ];
-    config.Cmd = [ "${package}/bin/rss-notify" ];
+    config = {
+      cmd = [ "${package}/bin/rss-notify" ];
+      Env = [ "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt" ];
+    };
+    layers = [
+      (nix2containerPkg.buildLayer { deps = [ pkgs.cacert ]; })
+      (nix2containerPkg.buildLayer { deps = [ package ]; })
+    ];
   };
 in
 {

@@ -1,0 +1,28 @@
+# CVE-2026-25679: net/url IPv6 host literal parsing
+# Services do not accept or parse user-supplied IPv6 host literals in URLs.
+CVE-2026-25679
+
+# CVE-2026-27137: crypto/x509 email name constraint enforcement
+# Services do not validate certificates with email SANs.
+CVE-2026-27137
+
+# CVEs below are in packages bundled inside npm's own node_modules within the
+# nodejs Nix store path. They are not reachable by the running Astro SSR server
+# and are only exercised by npm CLI commands.
+
+# glob@10.4.5 bundled in nodejs/lib/node_modules/npm — command injection via malicious filenames
+CVE-2025-64756
+
+# minimatch@9.0.5 bundled in nodejs/lib/node_modules/npm — DoS via crafted glob patterns
+CVE-2026-26996
+CVE-2026-27903
+CVE-2026-27904
+
+# tar@6.2.1 / tar@7.4.3 bundled in nodejs/lib/node_modules/npm — arbitrary file overwrite
+# via malicious archives; frontend does not extract user-supplied tarballs at runtime
+CVE-2026-23745
+CVE-2026-23950
+CVE-2026-24842
+CVE-2026-26960
+CVE-2026-29786
+CVE-2026-31802
