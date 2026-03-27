@@ -1,14 +1,5 @@
-[![build frontend](https://github.com/FKouhai/rss-demo/actions/workflows/build_frontend.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/build_frontend.yaml)
-[![build frontend container](https://github.com/FKouhai/rss-demo/actions/workflows/build_frontend_container.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/build_frontend_container.yaml)
-[![build notify](https://github.com/FKouhai/rss-demo/actions/workflows/build_notify.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/build_notify.yaml)
-[![build notify container](https://github.com/FKouhai/rss-demo/actions/workflows/build_notify_container.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/build_notify_container.yaml)
-[![build poller](https://github.com/FKouhai/rss-demo/actions/workflows/build_poller.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/build_poller.yaml)
-[![build poller container](https://github.com/FKouhai/rss-demo/actions/workflows/build_poller_container.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/build_poller_container.yaml)
-[![build locator](https://github.com/FKouhai/rss-demo/actions/workflows/build_locator.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/build_locator.yaml)
-[![build locator container](https://github.com/FKouhai/rss-demo/actions/workflows/build_locator_container.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/build_locator_container.yaml)
-[![Lint and test PR's for notify](https://github.com/FKouhai/rss-demo/actions/workflows/lint_and_test_notify.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/lint_and_test_notify.yaml)
-[![Lint and test PR's for poller](https://github.com/FKouhai/rss-demo/actions/workflows/lint_and_test_poller.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/lint_and_test_poller.yaml)
-[![Lint and test PR's for locator](https://github.com/FKouhai/rss-demo/actions/workflows/lint_and_test_locator.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/lint_and_test_locator.yaml)
+[![CI](https://github.com/FKouhai/rss-demo/actions/workflows/ci.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/ci.yaml)
+[![Release](https://github.com/FKouhai/rss-demo/actions/workflows/release.yaml/badge.svg)](https://github.com/FKouhai/rss-demo/actions/workflows/release.yaml)
 <h1 align="center">
   <div>
          <img href="https://builtwithnix.org" src="https://builtwithnix.org/badge.svg"/>
@@ -29,7 +20,6 @@ This repository contains the source code for the microservices responsible for h
 | [rss_notify](./rss_notify) | Go | Handles sending notifications for RSS feeds |
 | [rss_locator](./rss_locator) | Rust | Service registry for microservice discovery |
 | [rss_frontend](./rss_frontend) | Astro | User interface for interacting with RSS services |
-| [rss_config](./rss_config) | Go | Configuration service (deprecated) |
 
 ## Technologies Used
 
@@ -56,7 +46,6 @@ nix develop
 # Go services
 nix develop .#rss_poller
 nix develop .#rss_notify
-nix develop .#rss_config
 
 # Rust service
 nix develop .#rss_locator
@@ -98,10 +87,10 @@ nix build .#rss-locator-docker
 nix build .#rss-frontend-docker
 
 # Build and load into local Docker daemon
-nix run .#build-and-load-poller
-nix run .#build-and-load-notify
-nix run .#build-and-load-locator
-nix run .#build-and-load-frontend
+nix run .#rss-poller-docker
+nix run .#rss-notify-docker
+nix run .#rss-locator-docker
+nix run .#rss-frontend-docker
 
 # Build and load ALL images
 nix run .#build-and-load-all
