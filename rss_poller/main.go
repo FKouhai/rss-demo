@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"os"
 	"time"
@@ -37,19 +36,18 @@ func discoverNotifyService() {
 	notifyFQDN, err := bootstrap.GetServiceFQDN("notify")
 	if err != nil {
 		log.ErrorFmt("Failed to discover notify service. Falling back to NOTIFICATION_SENDER environment variable. Error: %v", err)
-		notificationServiceURL := os.Getenv("NOTIFICATION_SENDER")
-		handlers.SetNotificationServiceURL(notificationServiceURL)
-		if notificationServiceURL != "" {
-			log.Info("Using NOTIFICATION_SENDER from environment as fallback")
-		} else {
+		addr := os.Getenv("NOTIFICATION_SENDER")
+		if addr == "" {
 			log.Error("NOTIFICATION_SENDER environment variable not set. Notifications will not be sent.")
+			return
 		}
+		log.InfoFmt("Using NOTIFICATION_SENDER from environment as fallback: %s", addr)
+		handlers.ConnectNotifyWS(context.Background(), addr)
 		return
 	}
 
-	notificationServiceURL := fmt.Sprintf("%s/push", notifyFQDN)
-	handlers.SetNotificationServiceURL(notificationServiceURL)
-	log.InfoFmt("Discovered notify service at: %s", notificationServiceURL)
+	log.InfoFmt("Discovered notify service at: %s", notifyFQDN)
+	handlers.ConnectNotifyWS(context.Background(), notifyFQDN)
 }
 
 func startHeartbeat(tracer trace.Tracer) {
@@ -95,7 +93,7 @@ func main() {
 		backoff := 3 * time.Second
 		for i := range maxAttempts {
 			discoverNotifyService()
-			if handlers.NotificationServiceURL() != "" {
+			if handlers.WSConnected() {
 				return
 			}
 			log.InfoFmt("notify service not yet discoverable, retrying in %v (attempt %d/%d)", backoff, i+1, maxAttempts)

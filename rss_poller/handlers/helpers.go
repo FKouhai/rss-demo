@@ -2,7 +2,6 @@
 package handlers
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/FKouhai/rss-demo/libs/instrumentation"
 	log "github.com/FKouhai/rss-demo/libs/logger"
+	"github.com/coder/websocket"
 	"github.com/mmcdole/gofeed"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -22,8 +22,6 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
-
-var notificationServiceURL string
 
 var sharedHTTPClient = &http.Client{
 	Timeout: 10 * time.Second,
@@ -35,26 +33,15 @@ var sharedHTTPClient = &http.Client{
 	},
 }
 
-// SetNotificationServiceURL sets the notification service URL (called from main.go)
-func SetNotificationServiceURL(url string) {
-	notificationServiceURL = url
-}
-
-// NotificationServiceURL returns the currently configured notification service URL.
-func NotificationServiceURL() string {
-	return notificationServiceURL
-}
-
-// internal discordNotification struct used to parse and send the payload that's compliant with the rss_notification service
+// discordNotification is the payload sent to the notify service over WebSocket.
 type discordNotification struct {
-	Content    []string `json:"feed_url"`
-	WebHookURL string   `json:"webhook_url"`
-	// Add context to propagate tracing
-	Ctx context.Context
+	Content     []string `json:"feed_url"`
+	WebHookURL  string   `json:"webhook_url"`
+	Traceparent string   `json:"traceparent,omitempty"`
+	Ctx         context.Context
 }
 
-func (d *discordNotification) sendNotification(dst string) (int, error) {
-	// Use the context from the discordNotification struct
+func (d *discordNotification) sendNotification() error {
 	ctx := d.Ctx
 	if ctx == nil {
 		ctx = context.Background()
@@ -67,42 +54,43 @@ func (d *discordNotification) sendNotification(dst string) (int, error) {
 
 	if d.Content == nil {
 		span.SetAttributes(attribute.Int("http.status", http.StatusNoContent))
-		return http.StatusNoContent, nil
+		return nil
 	}
+
+	// Inject OTEL trace context into the payload.
+	carrier := propagation.MapCarrier{}
+	otel.GetTextMapPropagator().Inject(ctx, carrier)
+	d.Traceparent = carrier["traceparent"]
 
 	dn, err := json.Marshal(&d)
 	if err != nil {
 		span.RecordError(err)
-		return 0, err
+		return err
 	}
-	log.InfoFmt("Sending payload to notify service: %s", string(dn)) // TODO: add trace_id
+	log.InfoFmt("Sending payload to notify service via WebSocket: %s", string(dn))
 	span.SetAttributes(attribute.Int("payload.size", len(dn)))
 
-	// Create a new request with context
-	req, err := http.NewRequest("POST", dst, bytes.NewReader(dn))
-	if err != nil {
-		span.RecordError(err)
-		return 0, err
+	// Hold the lock across the write to prevent a race between a pointer swap and the write.
+	wsMu.Lock()
+	conn := wsConn
+	if conn == nil {
+		wsMu.Unlock()
+		log.Error("WebSocket not connected to notify, dropping notification")
+		return nil
 	}
-
-	// Add context propagation headers for tracing
-	req.Header.Add("Content-Type", "application/json")
-
-	// Inject the tracing context into the request headers
-	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
-
-	client := &http.Client{Timeout: 5 * time.Second}
-	res, err := client.Do(req)
+	writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	err = conn.Write(writeCtx, websocket.MessageText, dn)
 	if err != nil {
-		log.ErrorFmt("Failed to send request to notify service: %v", err)
+		wsConn = nil
+		wsMu.Unlock()
+		log.ErrorFmt("WebSocket write to notify failed: %v", err)
 		span.RecordError(err)
-		return 0, err
+		return err
 	}
-	log.InfoFmt("got from notify ep %v", res.StatusCode)
-	span.SetAttributes(attribute.Int("http.status", res.StatusCode))
-	// nolint
-	defer res.Body.Close()
-	return res.StatusCode, nil
+	wsMu.Unlock()
+
+	return nil
 }
 
 func processFeeds(ctx context.Context, feeds *gofeed.Feed) []feedsJSON {
@@ -266,7 +254,7 @@ func ParseRSS(ctx context.Context, feedURL []string) ([]*gofeed.Feed, error) {
 		})
 	}
 
-	eg.Wait() // nolint:errcheck — individual feed errors are handled above
+	_ = eg.Wait() // individual feed errors are already handled per-goroutine above
 
 	var parsed []*gofeed.Feed
 	for _, f := range feeds {
@@ -380,8 +368,8 @@ func pollAndNotify(t time.Time) {
 	if len(elementsToNotify) > 0 {
 		notificationReceiver := os.Getenv("NOTIFICATION_ENDPOINT")
 
-		if notificationReceiver == "" || notificationServiceURL == "" {
-			log.Error("Notification service is misconfigured, skipping notification.")
+		if notificationReceiver == "" {
+			log.Error("NOTIFICATION_ENDPOINT not set, skipping notification.")
 		} else {
 			// Build a detached context that carries cycleSpan as its active span
 			// but is not cancelled when pollAndNotify returns. This ensures
@@ -393,7 +381,7 @@ func pollAndNotify(t time.Time) {
 				Ctx:        notifCtx,
 			}
 			go func() {
-				if _, err := notify.sendNotification(notificationServiceURL); err != nil {
+				if err := notify.sendNotification(); err != nil {
 					log.ErrorFmt("Failed to send notification: %v", err)
 				}
 			}()

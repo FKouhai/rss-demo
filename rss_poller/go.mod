@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	github.com/FKouhai/rss-demo v0.0.0-20260326132423-14d56e1763ce
+	github.com/coder/websocket v1.8.14
 	github.com/mmcdole/gofeed v1.3.0
 	go.opentelemetry.io/otel v1.42.0
 	go.opentelemetry.io/otel/trace v1.42.0
