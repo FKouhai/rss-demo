@@ -9,11 +9,13 @@
   go ? pkgs.go,
   shellHook ? "",
   enabledPackages ? [ ],
+  devHelp ? null,
 }:
 pkgs.mkShell {
   inherit shellHook;
   packages = [
     go
   ]
+  ++ pkgs.lib.optional (devHelp != null) devHelp
   ++ enabledPackages;
 }
