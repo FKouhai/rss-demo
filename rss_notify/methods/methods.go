@@ -13,12 +13,74 @@ import (
 	"github.com/FKouhai/rss-demo/libs/instrumentation"
 	log "github.com/FKouhai/rss-demo/libs/logger"
 	webhookpush "github.com/FKouhai/rss-notify/webhookPush"
+	"github.com/coder/websocket"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
+
+type wsMessage struct {
+	FeedURLs    []string `json:"feed_url"`
+	WebhookURL  string   `json:"webhook_url"`
+	Traceparent string   `json:"traceparent,omitempty"`
+}
+
+// WSHandler upgrades the connection to WebSocket and processes incoming notification messages.
+func WSHandler(w http.ResponseWriter, r *http.Request) {
+	conn, err := websocket.Accept(w, r, nil)
+	if err != nil {
+		log.ErrorFmt("WebSocket upgrade failed: %v", err)
+		return
+	}
+	defer func() { _ = conn.CloseNow() }()
+
+	log.Info("WebSocket connection from poller established")
+
+	for {
+		_, msg, err := conn.Read(r.Context())
+		if err != nil {
+			log.ErrorFmt("WebSocket read closed: %v", err)
+			return
+		}
+
+		var wsMsg wsMessage
+		if err := json.Unmarshal(msg, &wsMsg); err != nil {
+			log.ErrorFmt("WebSocket message unmarshal error: %v", err)
+			continue
+		}
+
+		carrier := propagation.MapCarrier{}
+		if wsMsg.Traceparent != "" {
+			carrier["traceparent"] = wsMsg.Traceparent
+		}
+		ctx := otel.GetTextMapPropagator().Extract(r.Context(), carrier)
+		_, span := instrumentation.GetTracer("notify").Start(ctx, "handlers.WSNotification", trace.WithSpanKind(trace.SpanKindServer))
+		span.SetAttributes(attribute.Int("messages.count", len(wsMsg.FeedURLs)))
+
+		var d webhookpush.DiscordNotification
+		message, err := d.GetContent(ctx, msg)
+		if err != nil {
+			span.RecordError(err)
+			span.End()
+			continue
+		}
+
+		_, err = d.SendNotification(ctx, message)
+		if err != nil {
+			span.RecordError(err)
+		}
+		span.End()
+	}
+}
+
+// DeprecatedPushHandler returns 410 Gone to signal that the HTTP push endpoint has been replaced by WebSocket.
+func DeprecatedPushHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusGone)
+	w.Write([]byte(`{"error":"deprecated, use WebSocket /ws"}`)) //nolint:errcheck
+}
 
 // ReadyHandler returns 200 when notify is registered with the locator. Returns 503 otherwise.
 func ReadyHandler(w http.ResponseWriter, r *http.Request) {
@@ -32,7 +94,9 @@ func ReadyHandler(w http.ResponseWriter, r *http.Request) {
 	locatorURL := os.Getenv("LOCATOR_URL")
 	if locatorURL == "" {
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ready", "note": "LOCATOR_URL not set, skipping registration check"})
+		if err := json.NewEncoder(w).Encode(map[string]string{"status": "ready", "note": "LOCATOR_URL not set, skipping registration check"}); err != nil {
+			log.ErrorFmt("failed to encode response: %v", err)
+		}
 		return
 	}
 
@@ -56,18 +120,22 @@ func ReadyHandler(w http.ResponseWriter, r *http.Request) {
 	resp, err := client.Do(req)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		if resp != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}
 		span.SetAttributes(attribute.Int("http.status_code", http.StatusServiceUnavailable))
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]string{"status": "not ready", "reason": "notify not registered with locator"})
+		if err := json.NewEncoder(w).Encode(map[string]string{"status": "not ready", "reason": "notify not registered with locator"}); err != nil {
+			log.ErrorFmt("failed to encode response: %v", err)
+		}
 		return
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	span.SetAttributes(attribute.Int("http.status_code", http.StatusOK))
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "ready"})
+	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ready"}); err != nil {
+		log.ErrorFmt("failed to encode response: %v", err)
+	}
 }
 
 // PushNotificationHandler is the handler that is in charge of sending notification to the destination sourceloggers
