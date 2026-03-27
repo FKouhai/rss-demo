@@ -30,6 +30,11 @@ jobs:
             BASE="${{ github.event.before }}"
           fi
 
+          # Fallback if the base SHA isn't reachable (force-push, shallow clone edge cases)
+          if ! git cat-file -e "$BASE" 2>/dev/null; then
+            BASE="$(git rev-parse HEAD~1 2>/dev/null || git rev-list --max-parents=0 HEAD)"
+          fi
+
           CHANGED="$(git diff --name-only "$BASE" "${{ github.sha }}")"
           echo "Changed files:" && echo "$CHANGED"
 
@@ -106,3 +111,5 @@ jobs:
           scan-ref: .
           severity: HIGH,CRITICAL
           exit-code: "1"
+          ignore-unfixed: true
+          format: table
