@@ -71,7 +71,8 @@ func main() {
 	// Re-register with the locator on a heartbeat so a locator restart self-heals.
 	go startHeartbeat(tracer)
 
-	http.HandleFunc("/push", methods.PushNotificationHandler)
+	http.HandleFunc("/ws", methods.WSHandler)
+	http.HandleFunc("/push", methods.DeprecatedPushHandler)
 	http.HandleFunc("/healthz", methods.HealthzHandler)
 	http.HandleFunc("/ready", methods.ReadyHandler)
 	log.InfoFmt("starting server on port %d", 3000)
