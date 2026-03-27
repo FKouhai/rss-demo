@@ -18,6 +18,8 @@
     go-overlay = {
       url = "github:purpleclay/go-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
+      inputs.flake-utils.follows = "flake-utils";
+      inputs.git-hooks.follows = "git-hooks";
     };
   };
 
