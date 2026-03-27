@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -32,6 +33,15 @@ func init() {
 	}
 }
 
+// hostFromFQDN extracts the host:port from a raw address that may be a full
+// URL (e.g. "http://notify.svc:3000") or already a bare host:port.
+func hostFromFQDN(fqdn string) string {
+	if u, err := url.Parse(fqdn); err == nil && u.Host != "" {
+		return u.Host
+	}
+	return fqdn
+}
+
 func discoverNotifyService() {
 	notifyFQDN, err := bootstrap.GetServiceFQDN("notify")
 	if err != nil {
@@ -47,7 +57,7 @@ func discoverNotifyService() {
 	}
 
 	log.InfoFmt("Discovered notify service at: %s", notifyFQDN)
-	handlers.ConnectNotifyWS(context.Background(), notifyFQDN)
+	handlers.ConnectNotifyWS(context.Background(), hostFromFQDN(notifyFQDN))
 }
 
 func startHeartbeat(tracer trace.Tracer) {
