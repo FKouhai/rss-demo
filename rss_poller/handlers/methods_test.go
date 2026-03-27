@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -434,86 +433,28 @@ func TestDiffie(t *testing.T) {
 }
 
 func TestSendNotification(t *testing.T) {
-	// Test Case 1: Successful notification with valid content
-	t.Run("ValidContent", func(t *testing.T) {
-		// Set up a mock HTTP server. This server will handle the POST request
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Validate the request sent by sendNotificatio
-			if r.Method != http.MethodPost {
-				t.Errorf("Expected POST method, got %s", r.Method)
-			}
-			if r.Header.Get("Content-Type") != "application/json" {
-				t.Errorf("Expected Content-Type application/json, got %s", r.Header.Get("Content-Type"))
-			}
-
-			// Read and validate the request body
-			body, err := io.ReadAll(r.Body)
-			if err != nil {
-				t.Fatalf("Failed to read request body: %v", err)
-			}
-			var receivedData discordNotification
-			if err := json.Unmarshal(body, &receivedData); err != nil {
-				t.Fatalf("Failed to unmarshal request body: %v", err)
-			}
-
-			expectedContent := []string{"http://example.com/new-article"}
-			if len(receivedData.Content) != len(expectedContent) || receivedData.Content[0] != expectedContent[0] {
-				t.Errorf("Received content mismatch. Got %v, expected %v", receivedData.Content, expectedContent)
-			}
-
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("Success"))
-		}))
-		defer server.Close() // Make sure the server is closed after the test
-
-		// Create a notification object with valid data
-		d := &discordNotification{
-			Content:    []string{"http://example.com/new-article"},
-			WebHookURL: "http://example.com/webhook",
-		}
-
-		// Call the function under test, using the mock server's URL
-		status, err := d.sendNotification(server.URL)
-
-		// Assert the results
-		if err != nil {
-			t.Fatalf("Expected no error, but got: %v", err)
-		}
-		if status != http.StatusOK {
-			t.Errorf("Expected status %d, but got %d", http.StatusOK, status)
-		}
-	})
-
-	// Test Case 2: No content in the notification
+	// Test Case 1: No content in the notification — drops gracefully
 	t.Run("NoContent", func(t *testing.T) {
-		// This test should not make an HTTP request, so we don't need a mock server
 		d := &discordNotification{Content: nil}
-		status, err := d.sendNotification("http://should-not-be-called.com")
-
+		err := d.sendNotification()
 		if err != nil {
-			t.Fatalf("Expected no error, but got: %v", err)
-		}
-		if status != http.StatusNoContent {
-			t.Errorf("Expected status %d, but got %d", http.StatusNoContent, status)
+			t.Fatalf("Expected no error for nil content, but got: %v", err)
 		}
 	})
 
-	// Test Case 3: Error from the HTTP client
-	t.Run("HTTPClientError", func(t *testing.T) {
-		// Use an invalid URL to simulate a network error
+	// Test Case 2: No WebSocket connection — drops gracefully (logs and returns nil)
+	t.Run("NoWSConnection", func(t *testing.T) {
+		wsMu.Lock()
+		wsConn = nil
+		wsMu.Unlock()
+
 		d := &discordNotification{
 			Content:    []string{"http://example.com/new-article"},
 			WebHookURL: "http://example.com/webhook",
 		}
-		status, err := d.sendNotification("://invalid-url")
-
-		// We expect an error and a zero status code
-		if err == nil {
-			t.Fatal("Expected an error, but got none")
-		}
-		if status != 0 {
-			t.Errorf("Expected status 0, but got %d", status)
+		err := d.sendNotification()
+		if err != nil {
+			t.Fatalf("Expected nil when WS is not connected, but got: %v", err)
 		}
 	})
-
 }

@@ -84,7 +84,7 @@ func isRegistered(ctx context.Context, locatorURL, service string) bool {
 		span.RecordError(err)
 		return false
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	span.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
 	return resp.StatusCode == http.StatusOK
 }
@@ -102,23 +102,31 @@ func ReadyHandler(w http.ResponseWriter, r *http.Request) {
 	locatorURL := os.Getenv("LOCATOR_URL")
 	if locatorURL == "" {
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ready", "note": "LOCATOR_URL not set, skipping registration check"})
+		if err := json.NewEncoder(w).Encode(map[string]string{"status": "ready", "note": "LOCATOR_URL not set, skipping registration check"}); err != nil {
+			log.ErrorFmt("failed to encode response: %v", err)
+		}
 		return
 	}
 
 	if !isRegistered(ctx, locatorURL, "poller") {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]string{"status": "not ready", "reason": "poller not registered with locator"})
+		if err := json.NewEncoder(w).Encode(map[string]string{"status": "not ready", "reason": "poller not registered with locator"}); err != nil {
+			log.ErrorFmt("failed to encode response: %v", err)
+		}
 		return
 	}
 	if !isRegistered(ctx, locatorURL, "notify") {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]string{"status": "not ready", "reason": "notify dependency not registered"})
+		if err := json.NewEncoder(w).Encode(map[string]string{"status": "not ready", "reason": "notify dependency not registered"}); err != nil {
+			log.ErrorFmt("failed to encode response: %v", err)
+		}
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "ready"})
+	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ready"}); err != nil {
+		log.ErrorFmt("failed to encode response: %v", err)
+	}
 }
 
 // ConfigHandler reads the config sent via json and stores it in memory
