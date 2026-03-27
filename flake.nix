@@ -133,20 +133,17 @@
             # rss_poller and rss_notify each have their own go.mod and are separate
             # modules — exclude them from the root-module hooks.
             # They are covered by nix flake check (rss-*-test / rss-*-lint checks).
-            gofmt.enable = true;
+            # Use go-overlay-provided packages for consistency with the build toolchain.
+            gofmt = {
+              enable = true;
+              package = pkgsWithGo.go;
+            };
             gotest = {
               enable = true;
-              excludes = [
-                "^rss_poller/"
-                "^rss_notify/"
-              ];
             };
             golangci-lint = {
               enable = true;
-              excludes = [
-                "^rss_poller/"
-                "^rss_notify/"
-              ];
+              package = pkgsWithGo.golangci-lint;
             };
           };
         };
