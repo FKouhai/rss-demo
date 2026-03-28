@@ -414,7 +414,37 @@ func TestDiffie(t *testing.T) {
 		}
 	})
 
-	// Test case 3: Base feed is empty
+	// Test case 3: Same new URL appears in multiple extra feeds — must not duplicate
+	t.Run("DuplicateAcrossExtraFeeds", func(t *testing.T) {
+		extraFeeds := []*gofeed.Feed{
+			{Items: []*gofeed.Item{feedItem3}},
+			{Items: []*gofeed.Item{feedItem3}},
+		}
+		diff := diffie(context.Background(), baseFeeds, extraFeeds)
+		if len(diff) != 1 {
+			t.Fatalf("Expected 1 new element, but got %d: %v", len(diff), diff)
+		}
+		if diff[0] != feedItem3.Link {
+			t.Fatalf("Expected %s, got %s", feedItem3.Link, diff[0])
+		}
+	})
+
+	// Test case 4: Items with empty links are skipped
+	t.Run("EmptyLinkSkipped", func(t *testing.T) {
+		emptyLinkItem := &gofeed.Item{Link: ""}
+		extraFeeds := []*gofeed.Feed{
+			{Items: []*gofeed.Item{emptyLinkItem, feedItem3}},
+		}
+		diff := diffie(context.Background(), baseFeeds, extraFeeds)
+		if len(diff) != 1 {
+			t.Fatalf("Expected 1 new element, but got %d: %v", len(diff), diff)
+		}
+		if diff[0] != feedItem3.Link {
+			t.Fatalf("Expected %s, got %s", feedItem3.Link, diff[0])
+		}
+	})
+
+	// Test case 5: Base feed is empty
 	t.Run("EmptyBaseFeed", func(t *testing.T) {
 		var baseFeeds []*gofeed.Feed
 		extraFeeds := []*gofeed.Feed{

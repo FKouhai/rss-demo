@@ -307,9 +307,11 @@ func diffie(ctx context.Context, base []*gofeed.Feed, extra []*gofeed.Feed) []st
 	}
 
 	// Iterate through new feeds and find items not in the old map.
+	seen := make(map[string]bool)
 	for _, newFeed := range extra {
 		for _, newItem := range newFeed.Items {
-			if !isOld[newItem.Link] {
+			if !isOld[newItem.Link] && !seen[newItem.Link] && newItem.Link != "" {
+				seen[newItem.Link] = true
 				diffs = append(diffs, newItem.Link)
 			}
 		}
