@@ -42,7 +42,9 @@ var seen = make(map[string]bool)
 var notificationReceiver string
 
 func setNotificationReceiver(addr string) {
+	notifyMu.Lock()
 	notificationReceiver = addr
+	notifyMu.Unlock()
 }
 
 // discordNotification is the payload sent to the notify service over WebSocket.
@@ -202,16 +204,20 @@ func LoadConfig(ctx context.Context) {
 		return
 	}
 
+	cfgMu.Lock()
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		span.RecordError(err)
 		log.ErrorFmt("failed to parse config file: %v", err)
+		cfgMu.Unlock()
 		return
 	}
 
 	span.SetAttributes(attribute.Int("feeds.count", len(cfg.RSSFeeds)))
 	log.InfoFmt("loaded %d feeds from config file", len(cfg.RSSFeeds))
 
-	if len(cfg.RSSFeeds) > 0 {
+	hasFeeds := len(cfg.RSSFeeds) > 0
+	cfgMu.Unlock()
+	if hasFeeds {
 		if ep := os.Getenv("NOTIFICATION_ENDPOINT"); ep != "" {
 			setNotificationReceiver(ep)
 		}
@@ -230,7 +236,9 @@ func persistConfig(ctx context.Context) {
 	path := configFilePath()
 	span.SetAttributes(attribute.String("config.path", path))
 
+	cfgMu.RLock()
 	data, err := json.Marshal(&cfg)
+	cfgMu.RUnlock()
 	if err != nil {
 		span.RecordError(err)
 		return
@@ -397,7 +405,10 @@ func pollAndNotify(t time.Time) {
 	if len(toSend) == 0 {
 		return
 	}
-	if notificationReceiver == "" {
+	notifyMu.RLock()
+	receiver := notificationReceiver
+	notifyMu.RUnlock()
+	if receiver == "" {
 		log.Error("NOTIFICATION_ENDPOINT not set, skipping notification.")
 		return
 	}
@@ -411,7 +422,7 @@ func pollAndNotify(t time.Time) {
 	notifCtx := trace.ContextWithSpan(context.Background(), cycleSpan)
 	notify := discordNotification{
 		Content:    toSend,
-		WebHookURL: notificationReceiver,
+		WebHookURL: receiver,
 	}
 	go func() {
 		if err := notify.sendNotification(notifCtx); err != nil {
@@ -423,6 +434,8 @@ func pollAndNotify(t time.Time) {
 // startPolling initializes and runs the background poller goroutine.
 // Cancels any previously running poller before starting a new one.
 func startPolling() {
+	pollerMu.Lock()
+	defer pollerMu.Unlock()
 	if cancelFn != nil {
 		cancelFn()
 	}
