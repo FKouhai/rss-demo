@@ -296,6 +296,13 @@ func ParseRSS(ctx context.Context, feedURL []string) ([]*gofeed.Feed, error) {
 	return parsed, nil
 }
 
+// setRSSFeeds replaces the active feed list under the config lock.
+func setRSSFeeds(feeds []string) {
+	cfgMu.Lock()
+	cfg.RSSFeeds = feeds
+	cfgMu.Unlock()
+}
+
 // handleConfigPayload validates the HTTP request and unmarshals the JSON payload.
 func handleConfigPayload(r *http.Request) error {
 	if r.Method != http.MethodPost {
@@ -312,7 +319,9 @@ func handleConfigPayload(r *http.Request) error {
 	}
 	log.Info(string(body))
 
+	cfgMu.Lock()
 	jReader := strings.NewReader(string(body))
+	defer cfgMu.Unlock()
 	return json.NewDecoder(jReader).Decode(&cfg)
 }
 
@@ -366,8 +375,11 @@ func pollAndNotify(t time.Time) {
 	// lifecycle is deterministic and never leaks.
 	defer cycleSpan.End()
 
+	cfgMu.RLock()
+	feedsURL := cfg.RSSFeeds
+	cfgMu.RUnlock()
 	// Fetch the latest feeds.
-	feeds, err := ParseRSS(cycleCtx, cfg.RSSFeeds)
+	feeds, err := ParseRSS(cycleCtx, feedsURL)
 	if err != nil {
 		cycleSpan.RecordError(err)
 		return

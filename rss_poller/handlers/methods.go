@@ -47,6 +47,8 @@ var (
 	// Store ticker and cancel func for cleanup
 	// nolint:unused // This variable is assigned in helpers.go and used for cleanup
 	ticker *time.Ticker
+	// config mutex
+	cfgMu sync.RWMutex
 	// nolint:unused // This variable is assigned in helpers.go and used for cleanup
 	cancelFn context.CancelFunc
 	// locatorClient is a shared HTTP client for locator calls with otelhttp instrumentation.
