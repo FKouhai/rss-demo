@@ -1,5 +1,5 @@
-github.com/FKouhai/rss-demo v0.0.0-20260326132423-14d56e1763ce h1:zm6cgoa/PtBIPJPs8kqG3c4n+V1nOWvqdOe9b8xcIUk=
-github.com/FKouhai/rss-demo v0.0.0-20260326132423-14d56e1763ce/go.mod h1:UPoIm4HlkJNzzxOVVdfwqL55fQhZu/Y8zY5r5I7x9mE=
+github.com/FKouhai/rss-demo v0.0.0-20260418101738-8c6327a9cc16 h1:nfPUXOQTrw/DOoxZMotXSSYwF+b8eL+W2hTW0WsEvQk=
+github.com/FKouhai/rss-demo v0.0.0-20260418101738-8c6327a9cc16/go.mod h1:X3xo8eA8lZmmCKIF4bQysAfmjxopfS8IzSUOPHG2rhk=
 github.com/cenkalti/backoff/v5 v5.0.3 h1:ZN+IMa753KfX5hd8vVaMixjnqRZ3y8CuJKRKj1xcsSM=
 github.com/cenkalti/backoff/v5 v5.0.3/go.mod h1:rkhZdG3JZukswDf7f0cwqPNk4K0sa+F97BxZthm/crw=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
