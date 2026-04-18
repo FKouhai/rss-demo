@@ -49,6 +49,11 @@ var (
 	ticker *time.Ticker
 	// config mutex
 	cfgMu sync.RWMutex
+	// notify mutex
+	notifyMu sync.RWMutex
+	// poller mutex
+	pollerMu sync.Mutex
+
 	// nolint:unused // This variable is assigned in helpers.go and used for cleanup
 	cancelFn context.CancelFunc
 	// locatorClient is a shared HTTP client for locator calls with otelhttp instrumentation.
@@ -156,10 +161,13 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 	persistConfig(ctx)
 	startPolling()
 
+	cfgMu.RLock()
+	feedCount := len(cfg.RSSFeeds)
+	cfgMu.RUnlock()
 	span.SetAttributes(
 		attribute.Int("http.status", http.StatusOK),
 		attribute.String("http.method", "POST"),
-		attribute.Int("feeds.count", len(cfg.RSSFeeds)),
+		attribute.Int("feeds.count", feedCount),
 	)
 	w.WriteHeader(http.StatusOK)
 }
@@ -173,12 +181,15 @@ func ConfigGetHandler(w http.ResponseWriter, r *http.Request) {
 	log.Info("connection to GET /config/feeds established", zap.String("trace_id", span.SpanContext().TraceID().String()))
 
 	w.Header().Set("Content-Type", "application/json")
+	cfgMu.RLock()
+	snapshot := cfg
+	cfgMu.RUnlock()
 	span.SetAttributes(
 		attribute.Int("http.status", http.StatusOK),
 		attribute.String("http.method", "GET"),
-		attribute.Int("feeds.count", len(cfg.RSSFeeds)),
+		attribute.Int("feeds.count", len(snapshot.RSSFeeds)),
 	)
-	if err := json.NewEncoder(w).Encode(cfg); err != nil {
+	if err := json.NewEncoder(w).Encode(snapshot); err != nil {
 		span.RecordError(err)
 		w.WriteHeader(http.StatusInternalServerError)
 	}
@@ -224,8 +235,11 @@ func RSSHandler(w http.ResponseWriter, r *http.Request) {
 	// used as a sanity check to prevent possible race conditions
 	if feeds == nil {
 		log.Info("got null feeds", zap.String("trace_id", span.SpanContext().TraceID().String()))
+		cfgMu.RLock()
+		feedURLs := cfg.RSSFeeds
+		cfgMu.RUnlock()
 		var err error
-		feeds, err = ParseRSS(rctx, cfg.RSSFeeds)
+		feeds, err = ParseRSS(rctx, feedURLs)
 		if err != nil {
 			// nolint
 			span = httpSpanError(span, r.Method, err.Error(), http.StatusBadRequest)
