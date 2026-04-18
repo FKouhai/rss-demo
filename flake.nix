@@ -47,8 +47,8 @@
           ];
         };
 
-        # Workspace-pinned Go 1.26.0 — all tools derived from this version.
-        workspaceGo = pkgs.go-bin.versions."1.26.0";
+        # Workspace-pinned Go 1.26.2 — all tools derived from this version.
+        workspaceGo = pkgs.go-bin.versions."1.26.2";
         golangci-lint = workspaceGo.tools.golangci-lint.latest;
         govendor = go-overlay.packages.${system}.govendor;
 

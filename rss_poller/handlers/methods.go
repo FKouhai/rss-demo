@@ -9,15 +9,12 @@ import (
 	"net/http"
 	"os"
 	"sync"
-
 	"time"
 
-	"github.com/FKouhai/rss-demo/libs/instrumentation"
 	log "github.com/FKouhai/rss-demo/libs/logger"
 	"github.com/mmcdole/gofeed"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
@@ -25,11 +22,6 @@ import (
 // ConfigStruct contains the accepted config fields that this microservice will use
 type ConfigStruct struct {
 	RSSFeeds []string `json:"rss_feeds"`
-}
-
-type spanAttrs struct {
-	method   attribute.KeyValue
-	httpCode attribute.KeyValue
 }
 
 type feedsJSON struct {
@@ -72,8 +64,7 @@ var (
 // A child span is created and its context is injected as W3C traceparent headers so the
 // locator's RequestTracing middleware can parent its own spans to this trace.
 func isRegistered(ctx context.Context, locatorURL, service string) bool {
-	callCtx, span := instrumentation.GetTracer("poller").Start(ctx, "helper.isRegistered",
-		trace.WithSpanKind(trace.SpanKindClient))
+	callCtx, span := startSpan(ctx, "helper.isRegistered", trace.SpanKindClient)
 	defer span.End()
 	span.SetAttributes(
 		attribute.String("locator.service", service),
@@ -108,48 +99,32 @@ func isRegistered(ctx context.Context, locatorURL, service string) bool {
 func ReadyHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	ctx, span := instrumentation.GetTracer("poller").Start(r.Context(), "handlers.ReadyHandler",
-		trace.WithSpanKind(trace.SpanKindServer))
+	ctx, span := startSpan(r.Context(), "handlers.ReadyHandler", trace.SpanKindServer)
 	defer span.End()
 	log.Info("connection to /ready established", zap.String("trace_id", span.SpanContext().TraceID().String()))
 
 	locatorURL := os.Getenv("LOCATOR_URL")
 	if locatorURL == "" {
-		w.WriteHeader(http.StatusOK)
-		if err := json.NewEncoder(w).Encode(map[string]string{"status": "ready", "note": "LOCATOR_URL not set, skipping registration check"}); err != nil {
-			log.ErrorFmt("failed to encode response: %v", err)
-		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "note": "LOCATOR_URL not set, skipping registration check"})
 		return
 	}
-
 	if !isRegistered(ctx, locatorURL, "poller") {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		if err := json.NewEncoder(w).Encode(map[string]string{"status": "not ready", "reason": "poller not registered with locator"}); err != nil {
-			log.ErrorFmt("failed to encode response: %v", err)
-		}
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "not ready", "reason": "poller not registered with locator"})
 		return
 	}
 	if !isRegistered(ctx, locatorURL, "notify") {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		if err := json.NewEncoder(w).Encode(map[string]string{"status": "not ready", "reason": "notify dependency not registered"}); err != nil {
-			log.ErrorFmt("failed to encode response: %v", err)
-		}
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "not ready", "reason": "notify dependency not registered"})
 		return
 	}
-
-	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ready"}); err != nil {
-		log.ErrorFmt("failed to encode response: %v", err)
-	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }
 
-// ConfigHandler reads the config sent via json and stores it in memory
+// ConfigHandler reads the config sent via json and stores it in memory.
 // It also starts a new background poller with the new configuration.
 func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	_, span := instrumentation.GetTracer("poller").Start(ctx, "handlers.ConfigHandler", trace.WithSpanKind(trace.SpanKindServer))
+	_, span := startSpan(ctx, "handlers.ConfigHandler", trace.SpanKindServer)
 	defer span.End()
-
 	log.Info("accepted connection", zap.String("trace_id", span.SpanContext().TraceID().String()))
 
 	if err := handleConfigPayload(r); err != nil {
@@ -161,57 +136,32 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 	persistConfig(ctx)
 	startPolling()
 
-	cfgMu.RLock()
-	feedCount := len(cfg.RSSFeeds)
-	cfgMu.RUnlock()
-	span.SetAttributes(
-		attribute.Int("http.status", http.StatusOK),
-		attribute.String("http.method", "POST"),
-		attribute.Int("feeds.count", feedCount),
-	)
+	recordHTTPSpan(span, r.Method, http.StatusOK)
+	span.SetAttributes(attribute.Int("feeds.count", len(getConfigSnapshot().RSSFeeds)))
 	w.WriteHeader(http.StatusOK)
 }
 
 // ConfigGetHandler returns the feed URLs currently being polled.
 // The frontend uses this to stay in sync with the active config.
 func ConfigGetHandler(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	_, span := instrumentation.GetTracer("poller").Start(ctx, "handlers.ConfigGetHandler", trace.WithSpanKind(trace.SpanKindServer))
+	_, span := startSpan(r.Context(), "handlers.ConfigGetHandler", trace.SpanKindServer)
 	defer span.End()
 	log.Info("connection to GET /config/feeds established", zap.String("trace_id", span.SpanContext().TraceID().String()))
 
+	snapshot := getConfigSnapshot()
+	recordHTTPSpan(span, r.Method, http.StatusOK)
+	span.SetAttributes(attribute.Int("feeds.count", len(snapshot.RSSFeeds)))
+
 	w.Header().Set("Content-Type", "application/json")
-	cfgMu.RLock()
-	snapshot := cfg
-	cfgMu.RUnlock()
-	span.SetAttributes(
-		attribute.Int("http.status", http.StatusOK),
-		attribute.String("http.method", "GET"),
-		attribute.Int("feeds.count", len(snapshot.RSSFeeds)),
-	)
-	if err := json.NewEncoder(w).Encode(snapshot); err != nil {
-		span.RecordError(err)
-		w.WriteHeader(http.StatusInternalServerError)
-	}
+	writeJSON(w, http.StatusOK, snapshot)
 }
 
 // HealthzHandler is the route that exposes a healthcheck
 func HealthzHandler(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	_, span := instrumentation.GetTracer("poller").Start(ctx, "handlers.HealthzHandler", trace.WithSpanKind(trace.SpanKindServer))
+	_, span := startSpan(r.Context(), "handlers.HealthzHandler", trace.SpanKindServer)
 	defer span.End()
 	log.Info("connection to /health established", zap.String("trace_id", span.SpanContext().TraceID().String()))
-	w.WriteHeader(http.StatusOK)
-	status := map[string]string{"status": "healthy"}
-	err := json.NewEncoder(w).Encode(status)
-	if err != nil {
-		span.AddEvent("FAILED_TRANSACTION")
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		log.Error(err.Error())
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "healthy"})
 }
 
 // RSSHandler is the route that exposes the rss feeds that have been polled
@@ -221,38 +171,32 @@ func RSSHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 	w.Header().Set("Content-Type", "application/json")
-	rctx, span := instrumentation.GetTracer("poller").Start(ctx, "handlers.RSSHandler", trace.WithSpanKind(trace.SpanKindServer))
+
+	rctx, span := startSpan(ctx, "handlers.RSSHandler", trace.SpanKindServer)
 	defer span.End()
+	log.Info("connection to /rss established", zap.String("trace_id", span.SpanContext().TraceID().String()))
+
 	feedMutex.RLock()
 	feeds := globalFeed
 	feedMutex.RUnlock()
-	attributes := spanAttrs{
-		httpCode: attribute.Int("http.status", http.StatusOK),
-		method:   attribute.String("http.method", "GET"),
-	}
-	log.Info("connection to /rss established", zap.String("trace_id", span.SpanContext().TraceID().String()))
-	// checks if feeds have already been set, otherwise call ParseRSS and set the feeds locally
-	// used as a sanity check to prevent possible race conditions
+
+	// Use cached feeds when available; fall back to a live parse on first request.
 	if feeds == nil {
 		log.Info("got null feeds", zap.String("trace_id", span.SpanContext().TraceID().String()))
-		cfgMu.RLock()
-		feedURLs := cfg.RSSFeeds
-		cfgMu.RUnlock()
 		var err error
-		feeds, err = ParseRSS(rctx, feedURLs)
+		feeds, err = ParseRSS(rctx, getConfigSnapshot().RSSFeeds)
 		if err != nil {
-			// nolint
-			span = httpSpanError(span, r.Method, err.Error(), http.StatusBadRequest)
+			httpSpanError(span, r.Method, err.Error(), http.StatusBadRequest)
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 	}
-	err := toJSON(rctx, w, feeds)
-	if err != nil {
+
+	if err := toJSON(rctx, w, feeds); err != nil {
 		log.Error(err.Error())
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	// nolint
-	span = setSpanAttributes(span, attributes)
+
+	recordHTTPSpan(span, r.Method, http.StatusOK)
 }
