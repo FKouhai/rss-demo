@@ -31,6 +31,11 @@ var sharedHTTPClient = &http.Client{
 		IdleConnTimeout:     90 * time.Second,
 		DisableCompression:  false,
 	},
+var seenMu sync.Mutex
+var seen = make(map[string]bool)
+var notificationReceiver string
+func setNotificationReceiver(addr string) {
+	notificationReceiver = addr
 }
 
 // discordNotification is the payload sent to the notify service over WebSocket.
@@ -38,7 +43,7 @@ type discordNotification struct {
 	Content     []string `json:"feed_url"`
 	WebHookURL  string   `json:"webhook_url"`
 	Traceparent string   `json:"traceparent,omitempty"`
-	Ctx         context.Context
+	Tracestate  string   `json:"tracestate,omitempty"`
 }
 
 func (d *discordNotification) sendNotification() error {
@@ -272,55 +277,6 @@ func ParseRSS(ctx context.Context, feedURL []string) ([]*gofeed.Feed, error) {
 	return parsed, nil
 }
 
-// diffie should return either an empty/nil slice or a slice that contains
-// the newly added elements
-func diffie(ctx context.Context, base []*gofeed.Feed, extra []*gofeed.Feed) []string {
-	_, span := instrumentation.GetTracer("poller").Start(ctx, "helper.diffie", trace.WithSpanKind(trace.SpanKindInternal))
-	defer span.End()
-	span.AddEvent("COMPARING_FEEDS")
-
-	var diffs []string
-
-	// Count items in base feeds
-	baseItemCount := 0
-	for _, feed := range base {
-		baseItemCount += len(feed.Items)
-	}
-
-	// Count items in extra feeds
-	extraItemCount := 0
-	for _, feed := range extra {
-		extraItemCount += len(feed.Items)
-	}
-
-	span.SetAttributes(
-		attribute.Int("base.items", baseItemCount),
-		attribute.Int("extra.items", extraItemCount),
-	)
-
-	// Create a map for O(1) lookups of old item links.
-	isOld := make(map[string]bool)
-	for _, feed := range base {
-		for _, item := range feed.Items {
-			isOld[item.Link] = true
-		}
-	}
-
-	// Iterate through new feeds and find items not in the old map.
-	seen := make(map[string]bool)
-	for _, newFeed := range extra {
-		for _, newItem := range newFeed.Items {
-			if !isOld[newItem.Link] && !seen[newItem.Link] && newItem.Link != "" {
-				seen[newItem.Link] = true
-				diffs = append(diffs, newItem.Link)
-			}
-		}
-	}
-
-	span.SetAttributes(attribute.Int("new.items", len(diffs)))
-	return diffs
-}
-
 // handleConfigPayload validates the HTTP request and unmarshals the JSON payload.
 func handleConfigPayload(r *http.Request) error {
 	if r.Method != http.MethodPost {
@@ -341,11 +297,40 @@ func handleConfigPayload(r *http.Request) error {
 	return json.NewDecoder(jReader).Decode(&cfg)
 }
 
+func itemKey(it *gofeed.Item) string {
+	if it.GUID != "" {
+		return it.GUID
+	}
+	return it.Link
+}
+func collectNewLinks(ctx context.Context, feeds []*gofeed.Feed) []string {
+	_, span := instrumentation.GetTracer("poller").Start(ctx, "helper.collectNewLinks",
+		trace.WithSpanKind(trace.SpanKindInternal))
+	defer span.End()
+
+	var toSend []string
+	seenMu.Lock()
+	defer seenMu.Unlock()
+	for _, feed := range feeds {
+		for _, it := range feed.Items {
+			k := itemKey(it)
+			if k == "" || seen[k] {
+				continue
+			}
+			seen[k] = true
+			if it.Link != "" {
+				toSend = append(toSend, it.Link)
+			}
+		}
+	}
+	span.SetAttributes(attribute.Int("new.items", len(toSend)))
+	return toSend
+}
+
 // pollAndNotify contains the core logic for a single polling cycle.
 func pollAndNotify(t time.Time) {
-	log.InfoFmt("Poller ticker: tick at %v", t) // TODO: add trace_id if needed
+	log.InfoFmt("Poller ticker: tick at %v", t)
 
-	// Create a new span for this polling cycle
 	tracer := instrumentation.GetTracer("poller")
 	cycleCtx, cycleSpan := tracer.Start(
 		context.Background(),
@@ -354,46 +339,40 @@ func pollAndNotify(t time.Time) {
 	)
 	defer cycleSpan.End()
 
-	// Fetch the latest feeds
-	newFeeds, err := ParseRSS(cycleCtx, cfg.RSSFeeds)
+	// Fetch the latest feeds.
+	feeds, err := ParseRSS(cycleCtx, cfg.RSSFeeds)
 	if err != nil {
 		cycleSpan.RecordError(err)
 		return
 	}
 
-	// Find the new items using diffie
-	elementsToNotify := diffie(cycleCtx, globalFeed, newFeeds)
-	cycleSpan.SetAttributes(attribute.Int("new.items", len(elementsToNotify)))
+	// Deduplicate: collectNewLinks is a child span of PollAndNotify.
+	toSend := collectNewLinks(cycleCtx, feeds)
+	cycleSpan.SetAttributes(attribute.Int("new.items", len(toSend)))
 
-	// If there are new items, send a notification asynchronously so it does not
-	// delay updating globalFeed.
-	if len(elementsToNotify) > 0 {
-		notificationReceiver := os.Getenv("NOTIFICATION_ENDPOINT")
+	// Safely update the globalFeed with the latest data.
+	feedMutex.Lock()
+	globalFeed = feeds
+	feedMutex.Unlock()
 
-		if notificationReceiver == "" {
-			log.Error("NOTIFICATION_ENDPOINT not set, skipping notification.")
-		} else {
-			// Build a detached context that carries cycleSpan as its active span
-			// but is not cancelled when pollAndNotify returns. This ensures
-			// sendNotification's child span is properly nested in the trace.
-			notifCtx := trace.ContextWithSpan(context.Background(), cycleSpan)
-			notify := discordNotification{
-				Content:    elementsToNotify,
-				WebHookURL: notificationReceiver,
-				Ctx:        notifCtx,
-			}
-			go func() {
-				if err := notify.sendNotification(); err != nil {
-					log.ErrorFmt("Failed to send notification: %v", err)
-				}
-			}()
-		}
+	if len(toSend) == 0 {
+		return
+	}
+	if notificationReceiver == "" {
+		log.Error("NOTIFICATION_ENDPOINT not set, skipping notification.")
+		return
 	}
 
-	// Safely update the globalFeed with the latest data
-	feedMutex.Lock()
-	globalFeed = newFeeds
-	feedMutex.Unlock()
+	notifCtx := trace.ContextWithSpan(context.Background(), cycleSpan)
+	notify := discordNotification{
+		Content:    toSend,
+		WebHookURL: notificationReceiver,
+	}
+	go func() {
+		if err := notify.sendNotification(notifCtx); err != nil {
+			log.ErrorFmt("Failed to send notification: %v", err)
+		}
+	}()
 }
 
 // startPolling initializes and runs the background poller goroutine.
