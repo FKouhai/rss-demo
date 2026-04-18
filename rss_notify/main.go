@@ -16,6 +16,7 @@ import (
 	"github.com/FKouhai/rss-demo/libs/instrumentation"
 	log "github.com/FKouhai/rss-demo/libs/logger"
 	"github.com/FKouhai/rss-notify/methods"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -32,7 +33,7 @@ func init() {
 	if serviceFQDN == "" {
 		serviceFQDN = "notify:3000"
 	}
-	if err := bootstrap.Init("notify", serviceFQDN); err != nil {
+	if err := bootstrap.Init(context.Background(), "notify", serviceFQDN); err != nil {
 		log.ErrorFmt("Failed to register notify service with locator: %v", err)
 	}
 }
@@ -44,12 +45,11 @@ func startHeartbeat(tracer trace.Tracer) {
 		ctx, span := tracer.Start(context.Background(), "bootstrap.heartbeat",
 			trace.WithSpanKind(trace.SpanKindInternal))
 		span.SetAttributes(attribute.String("service", "notify"))
-		if err := bootstrap.Init("notify", serviceFQDN); err != nil {
+		if err := bootstrap.Init(ctx, "notify", serviceFQDN); err != nil {
 			span.RecordError(err)
 			log.ErrorFmt("heartbeat re-registration failed: %v", err)
 		}
 		span.End()
-		_ = ctx
 	}
 }
 
@@ -77,5 +77,5 @@ func main() {
 	http.HandleFunc("/ready", methods.ReadyHandler)
 	log.InfoFmt("starting server on port %d", 3000)
 	// nolint
-	http.ListenAndServe(":3000", nil)
+	http.ListenAndServe(":3000", otelhttp.NewHandler(http.DefaultServeMux, "rss_notify"))
 }

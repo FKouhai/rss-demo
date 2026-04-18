@@ -14,8 +14,10 @@ import (
 	log "github.com/FKouhai/rss-demo/libs/logger"
 	webhookpush "github.com/FKouhai/rss-notify/webhookPush"
 	"github.com/coder/websocket"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
@@ -25,6 +27,7 @@ type wsMessage struct {
 	FeedURLs    []string `json:"feed_url"`
 	WebhookURL  string   `json:"webhook_url"`
 	Traceparent string   `json:"traceparent,omitempty"`
+	Tracestate  string   `json:"tracestate,omitempty"`
 }
 
 // WSHandler upgrades the connection to WebSocket and processes incoming notification messages.
@@ -55,7 +58,20 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 		if wsMsg.Traceparent != "" {
 			carrier["traceparent"] = wsMsg.Traceparent
 		}
+		if wsMsg.Tracestate != "" {
+			carrier["tracestate"] = wsMsg.Tracestate
+		}
 		ctx := otel.GetTextMapPropagator().Extract(r.Context(), carrier)
+
+		extractedSpanCtx := trace.SpanContextFromContext(ctx)
+		httpSpanCtx := trace.SpanContextFromContext(r.Context())
+
+		log.Debug("[TRACE] WSHandler: trace context extraction",
+			zap.String("received_traceparent", wsMsg.Traceparent),
+			zap.String("extracted_trace_id", extractedSpanCtx.TraceID().String()),
+			zap.String("http_upgrade_trace_id", httpSpanCtx.TraceID().String()),
+			zap.Bool("trace_match", extractedSpanCtx.TraceID() == httpSpanCtx.TraceID()))
+
 		_, span := instrumentation.GetTracer("notify").Start(ctx, "handlers.WSNotification", trace.WithSpanKind(trace.SpanKindServer))
 		span.SetAttributes(attribute.Int("messages.count", len(wsMsg.FeedURLs)))
 
@@ -71,6 +87,9 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			span.RecordError(err)
 		}
+
+		log.Debug("[TRACE] WSHandler: notification processing complete",
+			zap.String("trace_id", span.SpanContext().TraceID().String()))
 		span.End()
 	}
 }
@@ -86,8 +105,7 @@ func DeprecatedPushHandler(w http.ResponseWriter, r *http.Request) {
 func ReadyHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
-	ctx, span := instrumentation.GetTracer("notify").Start(ctx, "handlers.ReadyHandler", trace.WithSpanKind(trace.SpanKindServer))
+	ctx, span := instrumentation.GetTracer("notify").Start(r.Context(), "handlers.ReadyHandler", trace.WithSpanKind(trace.SpanKindServer))
 	defer span.End()
 	log.Info("connection to /ready established", zap.String("trace_id", span.SpanContext().TraceID().String()))
 
@@ -116,7 +134,10 @@ func ReadyHandler(w http.ResponseWriter, r *http.Request) {
 	req.Header.Set("Content-Type", "application/json")
 	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
 
-	client := &http.Client{Timeout: 2 * time.Second}
+	client := &http.Client{
+		Timeout:   2 * time.Second,
+		Transport: otelhttp.NewTransport(http.DefaultTransport),
+	}
 	resp, err := client.Do(req)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		if resp != nil {
@@ -140,10 +161,7 @@ func ReadyHandler(w http.ResponseWriter, r *http.Request) {
 
 // PushNotificationHandler is the handler that is in charge of sending notification to the destination sourceloggers
 func PushNotificationHandler(w http.ResponseWriter, r *http.Request) {
-	// Extract the tracing context from the incoming request headers
-	ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
-
-	_, span := instrumentation.GetTracer("notify").Start(ctx, "handlers.PushNotification", trace.WithSpanKind(trace.SpanKindServer))
+	ctx, span := instrumentation.GetTracer("notify").Start(r.Context(), "handlers.PushNotification", trace.WithSpanKind(trace.SpanKindServer))
 	defer span.End()
 
 	log.Info("connection established", zap.String("trace_id", span.SpanContext().TraceID().String()))
@@ -168,7 +186,7 @@ func PushNotificationHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		span.AddEvent("FAILED_TRANSACTION")
 		span.RecordError(err)
-		span.SetStatus(http.StatusBadRequest, err.Error())
+		span.SetStatus(codes.Error, err.Error())
 		span.SetAttributes(attribute.Int("http.status_code", http.StatusBadRequest))
 		log.Error(err.Error())
 		return
@@ -181,7 +199,7 @@ func PushNotificationHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		span.AddEvent("FAILED_TRANSACTION")
 		span.RecordError(err)
-		span.SetStatus(http.StatusBadRequest, err.Error())
+		span.SetStatus(codes.Error, err.Error())
 		span.SetAttributes(attribute.Int("http.status_code", http.StatusBadRequest))
 		log.Error(err.Error())
 		return
@@ -193,7 +211,7 @@ func PushNotificationHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		span.AddEvent("FAILED_TRANSACTION")
 		span.RecordError(err)
-		span.SetStatus(http.StatusInternalServerError, err.Error())
+		span.SetStatus(codes.Error, err.Error())
 		span.SetAttributes(attribute.Int("http.status_code", http.StatusInternalServerError))
 		log.Error(err.Error())
 		return
@@ -205,10 +223,7 @@ func PushNotificationHandler(w http.ResponseWriter, r *http.Request) {
 
 // HealthzHandler is the route that exposes a healthcheck
 func HealthzHandler(w http.ResponseWriter, r *http.Request) {
-	// Extract the tracing context from the incoming request headers
-	ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
-
-	_, span := instrumentation.GetTracer("notify").Start(ctx, "handlers.HealthzHandler", trace.WithSpanKind(trace.SpanKindServer))
+	_, span := instrumentation.GetTracer("notify").Start(r.Context(), "handlers.HealthzHandler", trace.WithSpanKind(trace.SpanKindServer))
 	defer span.End()
 	log.Info("connection to /health established", zap.String("trace_id", span.SpanContext().TraceID().String()))
 	w.WriteHeader(http.StatusOK)
@@ -218,7 +233,7 @@ func HealthzHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		span.AddEvent("FAILED_TRANSACTION")
 		span.RecordError(err)
-		span.SetStatus(http.StatusInternalServerError, err.Error())
+		span.SetStatus(codes.Error, err.Error())
 		span.SetAttributes(attribute.Int("http.status_code", http.StatusInternalServerError))
 		log.Error(err.Error())
 		w.WriteHeader(http.StatusInternalServerError)

@@ -12,6 +12,7 @@ import (
 
 	"github.com/FKouhai/rss-demo/libs/instrumentation"
 	log "github.com/FKouhai/rss-demo/libs/logger"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
@@ -60,6 +61,12 @@ func (d *DiscordNotification) SendNotification(ctx context.Context, message []st
 	defer span.End()
 	span.AddEvent("SENDING_WEBHOOK")
 	span.SetAttributes(attribute.Int("messages.count", len(message)))
+
+	incomingTraceID := trace.SpanContextFromContext(ctx).TraceID()
+	log.Debug("[TRACE] SendNotification: incoming trace context",
+		zap.String("trace_id", incomingTraceID.String()),
+		zap.String("webhook_url", d.WebHookURL))
+
 	m, err := d.toDiscordMessage(ctx, message)
 	if err != nil {
 		span.RecordError(err)
@@ -73,7 +80,14 @@ func (d *DiscordNotification) SendNotification(ctx context.Context, message []st
 		return 0, err
 	}
 	req.Header.Add("Content-Type", "application/json")
-	client := &http.Client{Timeout: 10 * time.Second}
+
+	log.Debug("[TRACE] SendNotification: request traceparent header",
+		zap.String("traceparent", req.Header.Get("traceparent")))
+
+	client := &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: otelhttp.NewTransport(http.DefaultTransport),
+	}
 	res, err := client.Do(req)
 	if err != nil {
 		span.RecordError(err)
@@ -88,6 +102,10 @@ func (d *DiscordNotification) SendNotification(ctx context.Context, message []st
 		return http.StatusInternalServerError, err
 	}
 	span.SetAttributes(attribute.Int("webhook.status", res.StatusCode), attribute.Int("response.size", len(body)))
+
+	log.Debug("[TRACE] SendNotification: webhook response",
+		zap.Int("status_code", res.StatusCode),
+		zap.String("trace_id", span.SpanContext().TraceID().String()))
 	log.InfoFmt("webhook response: %v", string(body)) // TODO: add trace_id
 	return res.StatusCode, nil
 }
