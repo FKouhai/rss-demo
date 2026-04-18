@@ -1538,7 +1538,6 @@ dependencies = [
  "opentelemetry",
  "opentelemetry-instrumentation-actix-web",
  "opentelemetry-otlp",
- "opentelemetry-semantic-conventions",
  "opentelemetry_sdk",
  "serde",
  "tokio",

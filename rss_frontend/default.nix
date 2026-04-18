@@ -11,7 +11,7 @@ let
     pname = "rss-frontend";
     version = "0.1.0";
     src = ./.;
-    npmDepsHash = "sha256-IdNaXcw0FCBdIMELDt/iHf1chzGWAD7OY0LKcjxy2Ks=";
+    npmDepsHash = "sha256-looTstETB36fQ+Z1LdPyHz9FButM+4DlORncJ//HBoM=";
     NODE_OPTIONS = "--openssl-legacy-provider";
     # LOCATOR_URL is a runtime concern — blank it out at build time so any
     # .env file cannot bake a localhost URL into the build output.

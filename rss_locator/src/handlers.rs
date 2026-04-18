@@ -74,6 +74,6 @@ async fn healthz() -> impl Responder {
     let tracer = global::tracer("locator");
     tracer.in_span("handlers.healthz", |cx| {
         cx.span().set_attribute(KeyValue::new("http.status_code", 200));
-        format!("healthy")
+        "healthy".to_string()
     })
 }

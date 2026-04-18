@@ -11,7 +11,12 @@ impl PhoneBook {
         }
     }
 
-    pub fn add_entry(&mut self, name: String, number: String) {
+    // add_entry / list_entries / remove_entry are helpers used only in unit
+    // tests.  #[cfg(test)] excludes them from the release build entirely,
+    // silencing the dead_code warning and preventing them from becoming part
+    // of the public API.
+    #[cfg(test)]
+    pub(crate) fn add_entry(&mut self, name: String, number: String) {
         self.entries.insert(name, number);
     }
 
@@ -19,11 +24,13 @@ impl PhoneBook {
         self.entries.get(name)
     }
 
-    pub fn list_entries(&self) -> Vec<(&String, &String)> {
+    #[cfg(test)]
+    pub(crate) fn list_entries(&self) -> Vec<(&String, &String)> {
         self.entries.iter().collect()
     }
 
-    pub fn remove_entry(&mut self, name: &str) -> Option<String> {
+    #[cfg(test)]
+    pub(crate) fn remove_entry(&mut self, name: &str) -> Option<String> {
         self.entries.remove(name)
     }
 

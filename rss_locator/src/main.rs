@@ -7,13 +7,18 @@ use std::sync::{Arc, Mutex};
 async fn main() -> std::io::Result<()> {
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
 
-    if let Err(e) = telemetry::init_tracer("locator") {
-        eprintln!("Failed to initialize tracer: {}. Continuing without telemetry.", e);
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "Failed to initialize tracer",
-        ));
-    }
+    // Initialise telemetry.  On failure we log and continue — the service is
+    // still fully functional, just without traces.
+    let tracer_provider = match telemetry::init_tracer("locator") {
+        Ok(tp) => {
+            eprintln!("Telemetry initialised successfully");
+            Some(tp)
+        }
+        Err(e) => {
+            eprintln!("Failed to initialize tracer: {}. Running without telemetry.", e);
+            None
+        }
+    };
 
     let phonebook = Arc::new(Mutex::new(PhoneBook::new()));
     HttpServer::new(move || {
@@ -33,6 +38,13 @@ async fn main() -> std::io::Result<()> {
         e
     })?;
 
-    eprintln!("Tracer provider shutdown skipped");
+    // Flush and shut down the tracer provider so buffered spans reach the
+    // collector before the process exits.
+    if let Some(tp) = tracer_provider {
+        if let Err(e) = tp.shutdown() {
+            eprintln!("TracerProvider shutdown error: {}", e);
+        }
+    }
+
     Ok(())
 }
