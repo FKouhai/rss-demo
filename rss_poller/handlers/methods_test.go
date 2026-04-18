@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mmcdole/gofeed"
 	"go.opentelemetry.io/otel"
@@ -290,7 +291,7 @@ func TestToJSON(t *testing.T) {
 `
 
 	var buf bytes.Buffer
-	err := toJSON(&buf, feed)
+	err := toJSON(context.Background(), &buf, feed)
 	if err != nil {
 		t.Fatalf("toJSON returned an error: %v", err)
 	}
@@ -364,109 +365,131 @@ func TestHandleConfigPayload(t *testing.T) {
 	})
 }
 
-func TestDiffie(t *testing.T) {
-	// Sample gofeed.Item structs for testing
-	feedItem1 := &gofeed.Item{Link: "http://example.com/post1"}
-	feedItem2 := &gofeed.Item{Link: "http://example.com/post2"}
-	feedItem3 := &gofeed.Item{Link: "http://example.com/post3"}
+func TestCollectNewLinks(t *testing.T) {
+	item1 := &gofeed.Item{Link: "http://example.com/item1"}
+	item2 := &gofeed.Item{Link: "http://example.com/item2"}
+	item3 := &gofeed.Item{Link: "http://example.com/item3"}
+	itemGUID := &gofeed.Item{GUID: "tag:example.com,2024:42", Link: "http://example.com/item4"}
+	itemNoLink := &gofeed.Item{GUID: "guid-no-link", Link: ""}
 
-	// Create a base feed with two items and an extra feed with a new item
-	baseFeeds := []*gofeed.Feed{
-		{
-			Items: []*gofeed.Item{feedItem1, feedItem2},
-		},
+	feeds := []*gofeed.Feed{{Items: []*gofeed.Item{item1, item2}}}
+
+	t.Cleanup(func() { seen = make(map[string]bool) })
+
+	// First call: both items are new — toSend must contain exactly their Links.
+	t.Run("FirstCallReturnsAllLinks", func(t *testing.T) {
+		seen = make(map[string]bool)
+		got := collectNewLinks(context.Background(), feeds)
+		want := []string{"http://example.com/item1", "http://example.com/item2"}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("want %v, got %v", want, got)
+		}
+	})
+
+	// Second call with the same feeds: seen is already populated — toSend must be empty.
+	t.Run("SecondCallReturnEmpty", func(t *testing.T) {
+		got := collectNewLinks(context.Background(), feeds)
+		if len(got) != 0 {
+			t.Errorf("expected empty toSend on second call, got %v", got)
+		}
+	})
+
+	// New item added to feed: only the new link appears in toSend.
+	t.Run("NewItemOnlyInToSend", func(t *testing.T) {
+		feeds2 := []*gofeed.Feed{{Items: []*gofeed.Item{item1, item2, item3}}}
+		got := collectNewLinks(context.Background(), feeds2)
+		want := []string{"http://example.com/item3"}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("want %v, got %v", want, got)
+		}
+	})
+
+	// Item with GUID: dedup key is GUID, but Link is sent in toSend.
+	t.Run("GUIDKeyedItemSendsLink", func(t *testing.T) {
+		seen = make(map[string]bool)
+		feeds3 := []*gofeed.Feed{{Items: []*gofeed.Item{itemGUID}}}
+		got := collectNewLinks(context.Background(), feeds3)
+		want := []string{"http://example.com/item4"}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("want %v, got %v", want, got)
+		}
+		if !seen["tag:example.com,2024:42"] {
+			t.Error("expected GUID to be recorded in seen, not the Link")
+		}
+		// Second call: GUID already seen — nothing sent.
+		got2 := collectNewLinks(context.Background(), feeds3)
+		if len(got2) != 0 {
+			t.Errorf("expected empty on second call for GUID item, got %v", got2)
+		}
+	})
+
+	// Item with GUID but no Link: recorded in seen but never appended to toSend.
+	t.Run("GUIDWithNoLinkNotSent", func(t *testing.T) {
+		seen = make(map[string]bool)
+		feeds4 := []*gofeed.Feed{{Items: []*gofeed.Item{itemNoLink}}}
+		got := collectNewLinks(context.Background(), feeds4)
+		if len(got) != 0 {
+			t.Errorf("expected nothing sent for item with no link, got %v", got)
+		}
+		if !seen["guid-no-link"] {
+			t.Error("expected GUID with no link to still be recorded in seen")
+		}
+	})
+
+	// Same URL across multiple feeds in a single cycle: must not duplicate in toSend.
+	t.Run("DuplicateAcrossFeedsInOneCycle", func(t *testing.T) {
+		seen = make(map[string]bool)
+		feeds5 := []*gofeed.Feed{
+			{Items: []*gofeed.Item{item1}},
+			{Items: []*gofeed.Item{item1}},
+		}
+		got := collectNewLinks(context.Background(), feeds5)
+		if len(got) != 1 {
+			t.Errorf("expected 1 entry for duplicate across feeds, got %v", got)
+		}
+	})
+}
+
+func TestPollAndNotifySeenDedup(t *testing.T) {
+	mockServer := startMockRSSFeedServer()
+	defer mockServer.Close()
+
+	seen = make(map[string]bool)
+	globalFeed = nil
+	cfg.RSSFeeds = []string{mockServer.URL}
+	if err := os.Unsetenv("NOTIFICATION_ENDPOINT"); err != nil {
+		t.Fatal(err)
 	}
-	extraFeeds := []*gofeed.Feed{
-		{
-			Items: []*gofeed.Item{feedItem1, feedItem2, feedItem3},
-		},
+	t.Cleanup(func() {
+		globalFeed = nil
+		seen = make(map[string]bool)
+	})
+
+	pollAndNotify(time.Now())
+
+	firstSeenCount := len(seen)
+	if firstSeenCount == 0 {
+		t.Fatal("expected seen to contain items after first poll")
 	}
 
-	// Test case 1: New elements are found
-	t.Run("NewElementsFound", func(t *testing.T) {
-		diff := diffie(context.Background(), baseFeeds, extraFeeds)
+	for _, url := range []string{"http://example.com/item1", "http://example.com/item2"} {
+		if !seen[url] {
+			t.Errorf("expected seen[%q] to be true after first poll", url)
+		}
+	}
 
-		if len(diff) != 1 {
-			t.Fatalf("Expected 1 new element, but got %d", len(diff))
-		}
-		if diff[0] != feedItem3.Link {
-			t.Fatalf("Expected the new link to be %s, but got %s", feedItem3.Link, diff[0])
-		}
-	})
+	pollAndNotify(time.Now())
 
-	// Test case 2: No new elements are found
-	t.Run("NoNewElements", func(t *testing.T) {
-		baseFeeds := []*gofeed.Feed{
-			{
-				Items: []*gofeed.Item{feedItem1, feedItem2},
-			},
-		}
-		extraFeeds := []*gofeed.Feed{
-			{
-				Items: []*gofeed.Item{feedItem1, feedItem2},
-			},
-		}
-
-		diff := diffie(context.Background(), baseFeeds, extraFeeds)
-
-		if len(diff) != 0 {
-			t.Fatalf("Expected 0 new elements, but got %d", len(diff))
-		}
-	})
-
-	// Test case 3: Same new URL appears in multiple extra feeds — must not duplicate
-	t.Run("DuplicateAcrossExtraFeeds", func(t *testing.T) {
-		extraFeeds := []*gofeed.Feed{
-			{Items: []*gofeed.Item{feedItem3}},
-			{Items: []*gofeed.Item{feedItem3}},
-		}
-		diff := diffie(context.Background(), baseFeeds, extraFeeds)
-		if len(diff) != 1 {
-			t.Fatalf("Expected 1 new element, but got %d: %v", len(diff), diff)
-		}
-		if diff[0] != feedItem3.Link {
-			t.Fatalf("Expected %s, got %s", feedItem3.Link, diff[0])
-		}
-	})
-
-	// Test case 4: Items with empty links are skipped
-	t.Run("EmptyLinkSkipped", func(t *testing.T) {
-		emptyLinkItem := &gofeed.Item{Link: ""}
-		extraFeeds := []*gofeed.Feed{
-			{Items: []*gofeed.Item{emptyLinkItem, feedItem3}},
-		}
-		diff := diffie(context.Background(), baseFeeds, extraFeeds)
-		if len(diff) != 1 {
-			t.Fatalf("Expected 1 new element, but got %d: %v", len(diff), diff)
-		}
-		if diff[0] != feedItem3.Link {
-			t.Fatalf("Expected %s, got %s", feedItem3.Link, diff[0])
-		}
-	})
-
-	// Test case 5: Base feed is empty
-	t.Run("EmptyBaseFeed", func(t *testing.T) {
-		var baseFeeds []*gofeed.Feed
-		extraFeeds := []*gofeed.Feed{
-			{
-				Items: []*gofeed.Item{feedItem1, feedItem2},
-			},
-		}
-
-		diff := diffie(context.Background(), baseFeeds, extraFeeds)
-
-		if len(diff) != 2 {
-			t.Fatalf("Expected 2 new elements, but got %d", len(diff))
-		}
-	})
-
+	if len(seen) != firstSeenCount {
+		t.Errorf("expected seen count to stay %d after second poll, got %d", firstSeenCount, len(seen))
+	}
 }
 
 func TestSendNotification(t *testing.T) {
 	// Test Case 1: No content in the notification — drops gracefully
 	t.Run("NoContent", func(t *testing.T) {
 		d := &discordNotification{Content: nil}
-		err := d.sendNotification()
+		err := d.sendNotification(context.Background())
 		if err != nil {
 			t.Fatalf("Expected no error for nil content, but got: %v", err)
 		}
@@ -482,7 +505,7 @@ func TestSendNotification(t *testing.T) {
 			Content:    []string{"http://example.com/new-article"},
 			WebHookURL: "http://example.com/webhook",
 		}
-		err := d.sendNotification()
+		err := d.sendNotification(context.Background())
 		if err != nil {
 			t.Fatalf("Expected nil when WS is not connected, but got: %v", err)
 		}
