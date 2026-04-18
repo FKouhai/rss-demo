@@ -4,7 +4,6 @@ package instrumentation
 import (
 	"context"
 	"os"
-
 	"sync"
 
 	log "github.com/FKouhai/rss-demo/libs/logger"
@@ -17,6 +16,15 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 )
+
+// envOrDefault returns the value of the named environment variable, or def
+// when the variable is unset or empty.
+func envOrDefault(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
 
 var tp *sdktrace.TracerProvider
 
@@ -52,6 +60,8 @@ func InitTracer(tracerName string) (*sdktrace.TracerProvider, error) {
 		resource.WithAttributes(
 			attribute.String("service.name", tracerName),
 			attribute.String("library.language", "go"),
+			attribute.String("service.version", envOrDefault("SERVICE_VERSION", "0.1.0")),
+			attribute.String("deployment.environment", envOrDefault("ENV", "development")),
 		),
 	)
 	if err != nil {

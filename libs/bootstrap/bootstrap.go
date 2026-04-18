@@ -3,6 +3,7 @@ package bootstrap
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,7 +12,17 @@ import (
 	"time"
 
 	log "github.com/FKouhai/rss-demo/libs/logger"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
+
+var bootstrapHTTPClient = &http.Client{
+	Timeout: 10 * time.Second,
+	Transport: otelhttp.NewTransport(&http.Transport{
+		MaxIdleConns:        5,
+		MaxIdleConnsPerHost: 2,
+		IdleConnTimeout:     30 * time.Second,
+	}),
+}
 
 type registerRequest struct {
 	Service string `json:"service"`
@@ -75,7 +86,11 @@ func WaitForLocator() error {
 		baseDelay:  1 * time.Second,
 		maxDelay:   5 * time.Second,
 	}, func() error {
-		resp, err := http.Get(healthEndpoint)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, healthEndpoint, nil)
+		if err != nil {
+			return fmt.Errorf("failed to build health check request: %w", err)
+		}
+		resp, err := bootstrapHTTPClient.Do(req)
 		if err != nil {
 			return fmt.Errorf("locator not reachable: %w", err)
 		}
@@ -89,7 +104,7 @@ func WaitForLocator() error {
 }
 
 // Init registers the service with the locator service
-func Init(serviceName, fqdn string) error {
+func Init(ctx context.Context, serviceName, fqdn string) error {
 	locatorURL := os.Getenv("LOCATOR_URL")
 	if locatorURL == "" {
 		log.Info("LOCATOR_URL not set, skipping locator registration")
@@ -107,7 +122,13 @@ func Init(serviceName, fqdn string) error {
 			return fmt.Errorf("failed to marshal register request: %w", err)
 		}
 
-		resp, err := http.Post(registerEndpoint, "application/json", bytes.NewBuffer(body))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, registerEndpoint, bytes.NewBuffer(body))
+		if err != nil {
+			return fmt.Errorf("failed to build register request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := bootstrapHTTPClient.Do(req)
 		if err != nil {
 			return fmt.Errorf("failed to register with locator: %w", err)
 		}
@@ -130,7 +151,7 @@ func Init(serviceName, fqdn string) error {
 }
 
 // GetServiceFQDN queries the locator service to discover a service's FQDN
-func GetServiceFQDN(serviceName string) (string, error) {
+func GetServiceFQDN(ctx context.Context, serviceName string) (string, error) {
 	locatorURL := os.Getenv("LOCATOR_URL")
 	if locatorURL == "" {
 		return "", fmt.Errorf("LOCATOR_URL not set")
@@ -148,7 +169,13 @@ func GetServiceFQDN(serviceName string) (string, error) {
 			return fmt.Errorf("failed to marshal service request: %w", err)
 		}
 
-		resp, err := http.Post(servicesEndpoint, "application/json", bytes.NewBuffer(body))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, servicesEndpoint, bytes.NewBuffer(body))
+		if err != nil {
+			return fmt.Errorf("failed to build service discovery request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := bootstrapHTTPClient.Do(req)
 		if err != nil {
 			return fmt.Errorf("failed to query locator: %w", err)
 		}
