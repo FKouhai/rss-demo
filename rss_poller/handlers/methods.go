@@ -15,9 +15,9 @@ import (
 	"github.com/FKouhai/rss-demo/libs/instrumentation"
 	log "github.com/FKouhai/rss-demo/libs/logger"
 	"github.com/mmcdole/gofeed"
-	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
@@ -49,6 +49,15 @@ var (
 	ticker *time.Ticker
 	// nolint:unused // This variable is assigned in helpers.go and used for cleanup
 	cancelFn context.CancelFunc
+	// locatorClient is a shared HTTP client for locator calls with otelhttp instrumentation.
+	locatorClient = &http.Client{
+		Timeout: 2 * time.Second,
+		Transport: otelhttp.NewTransport(&http.Transport{
+			MaxIdleConns:        5,
+			MaxIdleConnsPerHost: 2,
+			IdleConnTimeout:     30 * time.Second,
+		}),
+	}
 )
 
 // isRegistered does a single, fast check against the locator to verify a service is registered.
@@ -76,10 +85,8 @@ func isRegistered(ctx context.Context, locatorURL, service string) bool {
 		return false
 	}
 	req.Header.Set("Content-Type", "application/json")
-	otel.GetTextMapPropagator().Inject(callCtx, propagation.HeaderCarrier(req.Header))
-
-	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Do(req)
+	// otelhttp.NewTransport in locatorClient injects traceparent automatically
+	resp, err := locatorClient.Do(req)
 	if err != nil {
 		span.RecordError(err)
 		return false
@@ -187,7 +194,7 @@ func HealthzHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		span.AddEvent("FAILED_TRANSACTION")
 		span.RecordError(err)
-		span.SetStatus(http.StatusInternalServerError, err.Error())
+		span.SetStatus(codes.Error, err.Error())
 		log.Error(err.Error())
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -224,7 +231,7 @@ func RSSHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	err := toJSON(w, feeds)
+	err := toJSON(rctx, w, feeds)
 	if err != nil {
 		log.Error(err.Error())
 		w.WriteHeader(http.StatusInternalServerError)

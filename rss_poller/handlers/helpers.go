@@ -9,14 +9,17 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/FKouhai/rss-demo/libs/instrumentation"
 	log "github.com/FKouhai/rss-demo/libs/logger"
 	"github.com/coder/websocket"
 	"github.com/mmcdole/gofeed"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
@@ -25,15 +28,19 @@ import (
 
 var sharedHTTPClient = &http.Client{
 	Timeout: 10 * time.Second,
-	Transport: &http.Transport{
+	Transport: otelhttp.NewTransport(&http.Transport{
 		MaxIdleConns:        20,
 		MaxIdleConnsPerHost: 5,
 		IdleConnTimeout:     90 * time.Second,
 		DisableCompression:  false,
-	},
+	}),
+}
+
 var seenMu sync.Mutex
 var seen = make(map[string]bool)
+
 var notificationReceiver string
+
 func setNotificationReceiver(addr string) {
 	notificationReceiver = addr
 }
@@ -46,13 +53,12 @@ type discordNotification struct {
 	Tracestate  string   `json:"tracestate,omitempty"`
 }
 
-func (d *discordNotification) sendNotification() error {
-	ctx := d.Ctx
+func (d *discordNotification) sendNotification(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	_, span := instrumentation.GetTracer("poller").Start(ctx, "helper.sendNotification", trace.WithSpanKind(trace.SpanKindInternal))
+	spanCtx, span := instrumentation.GetTracer("poller").Start(ctx, "helper.sendNotification", trace.WithSpanKind(trace.SpanKindClient))
 	defer span.End()
 	span.AddEvent("SENDING_NOTIFICATION")
 	span.SetAttributes(attribute.Int("items.count", len(d.Content)))
@@ -64,16 +70,19 @@ func (d *discordNotification) sendNotification() error {
 
 	// Inject OTEL trace context into the payload.
 	carrier := propagation.MapCarrier{}
-	otel.GetTextMapPropagator().Inject(ctx, carrier)
+	otel.GetTextMapPropagator().Inject(spanCtx, carrier)
 	d.Traceparent = carrier["traceparent"]
+	d.Tracestate = carrier["tracestate"]
+
+	log.Debug("[TRACE] sendNotification: trace context injection",
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		zap.String("traceparent", carrier["traceparent"]))
 
 	dn, err := json.Marshal(&d)
 	if err != nil {
 		span.RecordError(err)
 		return err
 	}
-	log.InfoFmt("Sending payload to notify service via WebSocket: %s", string(dn))
-	span.SetAttributes(attribute.Int("payload.size", len(dn)))
 
 	// Hold the lock across the write to prevent a race between a pointer swap and the write.
 	wsMu.Lock()
@@ -83,17 +92,25 @@ func (d *discordNotification) sendNotification() error {
 		log.Error("WebSocket not connected to notify, dropping notification")
 		return nil
 	}
+	wsMu.Unlock()
+
+	log.Debug("[TRACE] sendNotification: sending payload to notify service via WebSocket",
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		zap.Int("payload.size", len(dn)))
 	writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	err = conn.Write(writeCtx, websocket.MessageText, dn)
 	if err != nil {
+		wsMu.Lock()
 		wsConn = nil
 		wsMu.Unlock()
 		log.ErrorFmt("WebSocket write to notify failed: %v", err)
 		span.RecordError(err)
 		return err
 	}
-	wsMu.Unlock()
+
+	log.Debug("[TRACE] sendNotification: WebSocket write successful",
+		zap.String("trace_id", span.SpanContext().TraceID().String()))
 
 	return nil
 }
@@ -120,7 +137,7 @@ func processFeeds(ctx context.Context, feeds *gofeed.Feed) []feedsJSON {
 func httpSpanError(span trace.Span, method string, logMsg string, httpCode int) trace.Span {
 	log.Error(logMsg)
 	span.RecordError(errors.New(logMsg), trace.WithStackTrace(true))
-	span.SetStatus(http.StatusInternalServerError, logMsg)
+	span.SetStatus(codes.Error, logMsg)
 	attributes := spanAttrs{
 		httpCode: attribute.Int("http.status", httpCode),
 		method:   attribute.String("http.method", method),
@@ -133,9 +150,9 @@ func setSpanAttributes(span trace.Span, attributes spanAttrs) trace.Span {
 	return span
 }
 
-func toJSON(w io.Writer, feeds []*gofeed.Feed) error {
+func toJSON(ctx context.Context, w io.Writer, feeds []*gofeed.Feed) error {
 	var jFeeds []feedsJSON
-	lctx, span := instrumentation.GetTracer("poller").Start(context.Background(), "helper.toJSON", trace.WithSpanKind(trace.SpanKindInternal))
+	lctx, span := instrumentation.GetTracer("poller").Start(ctx, "helper.toJSON", trace.WithSpanKind(trace.SpanKindInternal))
 	defer span.End()
 	span.AddEvent("INTERNAL::toJSON")
 
@@ -195,6 +212,9 @@ func LoadConfig(ctx context.Context) {
 	log.InfoFmt("loaded %d feeds from config file", len(cfg.RSSFeeds))
 
 	if len(cfg.RSSFeeds) > 0 {
+		if ep := os.Getenv("NOTIFICATION_ENDPOINT"); ep != "" {
+			setNotificationReceiver(ep)
+		}
 		startPolling()
 	}
 }
@@ -228,7 +248,7 @@ func persistConfig(ctx context.Context) {
 
 // ParseRSS returns the rss feed with all its items
 func ParseRSS(ctx context.Context, feedURL []string) ([]*gofeed.Feed, error) {
-	_, span := instrumentation.GetTracer("poller").Start(ctx, "helper.ParseRSS", trace.WithSpanKind(trace.SpanKindServer))
+	_, span := instrumentation.GetTracer("poller").Start(ctx, "helper.ParseRSS", trace.WithSpanKind(trace.SpanKindClient))
 	defer span.End()
 	span.AddEvent("PARSING_FEED")
 	span.SetAttributes(attribute.Int("feeds.expected", len(feedURL)))
@@ -238,7 +258,6 @@ func ParseRSS(ctx context.Context, feedURL []string) ([]*gofeed.Feed, error) {
 	eg.SetLimit(10)
 
 	for i, v := range feedURL {
-		i, v := i, v // capture loop variables
 		eg.Go(func() error {
 			feedCtx, feedCancel := context.WithTimeout(egCtx, 8*time.Second)
 			defer feedCancel()
@@ -303,6 +322,12 @@ func itemKey(it *gofeed.Item) string {
 	}
 	return it.Link
 }
+
+// collectNewLinks scans feeds and returns URLs not yet present in the seen map,
+// recording each newly encountered key into seen. Items with empty links are skipped.
+// The GUID (or Link when no GUID) is used as the dedup key; only the Link is
+// appended to the returned slice so callers always receive real URLs.
+// A child span is created so the dedup step is visible inside the PollAndNotify trace.
 func collectNewLinks(ctx context.Context, feeds []*gofeed.Feed) []string {
 	_, span := instrumentation.GetTracer("poller").Start(ctx, "helper.collectNewLinks",
 		trace.WithSpanKind(trace.SpanKindInternal))
@@ -337,6 +362,8 @@ func pollAndNotify(t time.Time) {
 		"poller.PollAndNotify",
 		trace.WithSpanKind(trace.SpanKindInternal),
 	)
+	// Always end the cycle span when this function returns so the span
+	// lifecycle is deterministic and never leaks.
 	defer cycleSpan.End()
 
 	// Fetch the latest feeds.
@@ -363,6 +390,12 @@ func pollAndNotify(t time.Time) {
 		return
 	}
 
+	// Send the notification asynchronously so it does not delay updating
+	// globalFeed.  The detached context carries cycleSpan so the goroutine's
+	// child span (helper.sendNotification) appears nested in the same trace,
+	// even after pollAndNotify has returned and cycleSpan has been exported.
+	// OTel parent-child linkage is recorded at child-start time (span IDs are
+	// copied), so ending the parent first does not break the trace hierarchy.
 	notifCtx := trace.ContextWithSpan(context.Background(), cycleSpan)
 	notify := discordNotification{
 		Content:    toSend,

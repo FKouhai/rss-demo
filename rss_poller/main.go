@@ -11,6 +11,7 @@ import (
 	"github.com/FKouhai/rss-demo/libs/instrumentation"
 	log "github.com/FKouhai/rss-demo/libs/logger"
 	"github.com/FKouhai/rss-poller/handlers"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -28,7 +29,7 @@ func init() {
 		serviceFQDN = "poller:3000"
 	}
 
-	if err := bootstrap.Init("poller", serviceFQDN); err != nil {
+	if err := bootstrap.Init(context.Background(), "poller", serviceFQDN); err != nil {
 		log.ErrorFmt("Failed to register poller with locator: %v", err)
 	}
 }
@@ -43,7 +44,7 @@ func hostFromFQDN(fqdn string) string {
 }
 
 func discoverNotifyService() {
-	notifyFQDN, err := bootstrap.GetServiceFQDN("notify")
+	notifyFQDN, err := bootstrap.GetServiceFQDN(context.Background(), "notify")
 	if err != nil {
 		log.ErrorFmt("Failed to discover notify service. Falling back to NOTIFICATION_SENDER environment variable. Error: %v", err)
 		addr := os.Getenv("NOTIFICATION_SENDER")
@@ -67,12 +68,11 @@ func startHeartbeat(tracer trace.Tracer) {
 		ctx, span := tracer.Start(context.Background(), "bootstrap.heartbeat",
 			trace.WithSpanKind(trace.SpanKindInternal))
 		span.SetAttributes(attribute.String("service", "poller"))
-		if err := bootstrap.Init("poller", serviceFQDN); err != nil {
+		if err := bootstrap.Init(ctx, "poller", serviceFQDN); err != nil {
 			span.RecordError(err)
 			log.ErrorFmt("heartbeat re-registration failed: %v", err)
 		}
 		span.End()
-		_ = ctx
 	}
 }
 
@@ -115,12 +115,13 @@ func main() {
 		log.Error("failed to discover notify service after all attempts; notifications will not be sent")
 	}()
 
-	http.HandleFunc("/config", handlers.ConfigHandler)
-	http.HandleFunc("/config/feeds", handlers.ConfigGetHandler)
-	http.HandleFunc("/healthz", handlers.HealthzHandler)
-	http.HandleFunc("/ready", handlers.ReadyHandler)
-	http.HandleFunc("/rss", handlers.RSSHandler)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/config", handlers.ConfigHandler)
+	mux.HandleFunc("/config/feeds", handlers.ConfigGetHandler)
+	mux.HandleFunc("/healthz", handlers.HealthzHandler)
+	mux.HandleFunc("/ready", handlers.ReadyHandler)
+	mux.HandleFunc("/rss", handlers.RSSHandler)
 	log.InfoFmt("starting server on port %d", 3000)
 	// nolint
-	http.ListenAndServe(":3000", nil)
+	http.ListenAndServe(":3000", otelhttp.NewHandler(mux, "rss_poller"))
 }
