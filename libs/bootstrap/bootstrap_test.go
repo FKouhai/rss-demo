@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -46,7 +47,7 @@ func TestInit(t *testing.T) {
 
 			t.Setenv("LOCATOR_URL", server.URL)
 
-			err := Init(tt.serviceName, tt.fqdn)
+			err := Init(context.Background(), tt.serviceName, tt.fqdn)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Init() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -57,7 +58,7 @@ func TestInit(t *testing.T) {
 func TestInitNoLocatorURL(t *testing.T) {
 	t.Setenv("LOCATOR_URL", "")
 
-	err := Init("test-service", "test-service.local")
+	err := Init(context.Background(), "test-service", "test-service.local")
 	if err != nil {
 		t.Errorf("Init() should not error when LOCATOR_URL is not set, got: %v", err)
 	}
