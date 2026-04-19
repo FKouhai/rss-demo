@@ -11,7 +11,7 @@ let
     pname = "rss-frontend";
     version = "0.1.0";
     src = ./.;
-    npmDepsHash = "sha256-looTstETB36fQ+Z1LdPyHz9FButM+4DlORncJ//HBoM=";
+    npmDepsHash = "sha256-AsxSdFc+UTOBnTM2WQVRfz1aUk/cVIi/kwNbQLZ8PP4=";
     NODE_OPTIONS = "--openssl-legacy-provider";
     # LOCATOR_URL is a runtime concern — blank it out at build time so any
     # .env file cannot bake a localhost URL into the build output.
@@ -26,6 +26,8 @@ let
       cp -r dist/* $out/dist
       mkdir -p $out/node_modules
       cp -r node_modules/* $out/node_modules
+      cp instrumentation.cjs $out/instrumentation.cjs
+      cp package.json $out/package.json
     '';
   };
 
@@ -35,6 +37,8 @@ let
     config = {
       cmd = [
         "${linuxPkgs.nodejs}/bin/node"
+        "--require"
+        "${package}/instrumentation.cjs"
         "${package}/dist/server/entry.mjs"
       ];
       Env = [ "SSL_CERT_FILE=${linuxPkgs.cacert}/etc/ssl/certs/ca-bundle.crt" ];
