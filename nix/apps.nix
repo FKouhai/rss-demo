@@ -3,15 +3,14 @@ let
   dockerApps = pkgs.lib.filterAttrs (n: _: pkgs.lib.hasSuffix "-docker" n) packages;
 
   mkDockerApp =
-    name: _:
+    name: image:
     let
       imageName = pkgs.lib.removeSuffix "-docker" name;
     in
     {
       type = "app";
       program = "${pkgs.writeShellScriptBin "build-and-load-${name}" ''
-        nix build .#${name}
-        docker load < result
+        ${image.copyToDockerDaemon}/bin/copy-to-docker-daemon
         echo "Loaded ${imageName}:latest"
       ''}/bin/build-and-load-${name}";
     };
@@ -19,9 +18,10 @@ let
   loadAllCmds = pkgs.lib.concatMapStringsSep "\n" (
     name:
     let
+      image = dockerApps.${name};
       imageName = pkgs.lib.removeSuffix "-docker" name;
     in
-    "nix build .#${name} && docker load < result && echo \"Loaded ${imageName}:latest\""
+    "${image.copyToDockerDaemon}/bin/copy-to-docker-daemon && echo \"Loaded ${imageName}:latest\""
   ) (builtins.attrNames dockerApps);
 in
 pkgs.lib.mapAttrs mkDockerApp dockerApps
