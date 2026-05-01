@@ -282,13 +282,6 @@ func ParseRSS(ctx context.Context, feedURL []string) ([]*gofeed.Feed, error) {
 	return parsed, nil
 }
 
-// setRSSFeeds replaces the active feed list under the config lock.
-func setRSSFeeds(feeds []string) {
-	cfgMu.Lock()
-	cfg.RSSFeeds = feeds
-	cfgMu.Unlock()
-}
-
 // handleConfigPayload validates the HTTP request and unmarshals the JSON payload.
 func handleConfigPayload(r *http.Request) error {
 	if r.Method != http.MethodPost {
