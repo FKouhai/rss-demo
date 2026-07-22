@@ -23,21 +23,6 @@ import (
 
 var serviceFQDN string
 
-func init() {
-	if err := bootstrap.WaitForLocator(); err != nil {
-		log.ErrorFmt("Locator service not available: %v", err)
-		return
-	}
-
-	serviceFQDN = os.Getenv("SERVICE_FQDN")
-	if serviceFQDN == "" {
-		serviceFQDN = "notify:3000"
-	}
-	if err := bootstrap.Init(context.Background(), "notify", serviceFQDN); err != nil {
-		log.ErrorFmt("Failed to register notify service with locator: %v", err)
-	}
-}
-
 func startHeartbeat(tracer trace.Tracer) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
@@ -54,6 +39,11 @@ func startHeartbeat(tracer trace.Tracer) {
 }
 
 func main() {
+	serviceFQDN = os.Getenv("SERVICE_FQDN")
+	if serviceFQDN == "" {
+		serviceFQDN = "notify:3000"
+	}
+
 	tp, err := instrumentation.InitTracer("notify")
 	if err != nil {
 		log.Error(err.Error())
@@ -65,6 +55,15 @@ func main() {
 			log.Debug(err.Error())
 		}
 	}()
+
+	// Wait for locator and register the service.
+	if err := bootstrap.WaitForLocator(); err != nil {
+		log.ErrorFmt("Locator service not available: %v", err)
+	} else {
+		if err := bootstrap.Init(context.Background(), "notify", serviceFQDN); err != nil {
+			log.ErrorFmt("Failed to register notify service with locator: %v", err)
+		}
+	}
 
 	tracer := instrumentation.GetTracer("notify")
 

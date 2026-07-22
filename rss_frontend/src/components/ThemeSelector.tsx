@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'preact/hooks';
 
 const THEMES = [
-  { id: 'slate',  label: 'Slate',  color: '#5E6AD2' },
-  { id: 'amber',  label: 'Amber',  color: '#D97706' },
-  { id: 'purple', label: 'Purple', color: '#7C3AED' },
+  { id: 'slate',       label: 'Slate',       color: '#5E6AD2' },
+  { id: 'amber',       label: 'Amber',       color: '#D97706' },
+  { id: 'purple',      label: 'Purple',      color: '#7C3AED' },
+  { id: 'better-auth', label: 'Better Auth', color: '#F97316' },
 ] as const;
 
 type ThemeId = typeof THEMES[number]['id'];
@@ -24,19 +25,19 @@ export function ThemeSelector() {
   };
 
   return (
-    <div class="flex items-center gap-2 px-2">
+    <div class="flex items-center gap-1.5 px-2">
       {THEMES.map(({ id, label, color }) => (
         <button
           key={id}
           onClick={() => select(id)}
           title={label}
           aria-label={`Switch to ${label} theme`}
-          class={`h-5 w-5 rounded-full transition-all duration-150 ${
+          class={`h-4 w-4 rounded-full transition-all duration-150 ${
             active === id
-              ? 'ring-2 ring-offset-2 ring-offset-background scale-110'
-              : 'opacity-60 hover:opacity-100 hover:scale-105'
+              ? 'ring-2 ring-offset-2 ring-offset-background scale-125 shadow-md'
+              : 'opacity-50 hover:opacity-90 hover:scale-110'
           }`}
-          style={{ backgroundColor: color, ringColor: color }}
+          style={{ backgroundColor: color }}
         />
       ))}
     </div>

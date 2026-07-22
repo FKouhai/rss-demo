@@ -9,33 +9,69 @@ interface Props {
 const { currentPage } = Astro.props;
 
 const links = [
-  { href: '/',       label: 'Feeds',     page: 'feeds'  },
-  { href: '/config', label: 'Configure', page: 'config' },
-  { href: '/status', label: 'Status',    page: 'status' },
+  { href: '/',       label: 'Feeds',     page: 'feeds',  icon: 'rss'     },
+  { href: '/config', label: 'Configure', page: 'config', icon: 'settings' },
+  { href: '/status', label: 'Status',    page: 'status', icon: 'activity' },
 ] as const;
 ---
 
 <!-- Mobile/tablet: horizontal top bar — Desktop (lg+): fixed vertical sidebar -->
-<nav class="flex items-center justify-between px-4 py-3 border-b border-border bg-background/80 backdrop-blur-sm z-40 lg:fixed lg:inset-y-0 lg:left-0 lg:w-52 lg:flex-col lg:items-stretch lg:justify-start lg:border-r lg:border-b-0 lg:py-8 lg:px-3">
-  <div class="flex gap-6 lg:flex-col lg:gap-1 lg:flex-1">
-    <a href="/" class="hidden lg:block mb-4 px-3">
-      <span class="text-lg font-bold tracking-tight text-foreground">RSS Reader</span>
-      <span class="block text-xs text-muted-foreground mt-0.5">Your feeds, your way</span>
-    </a>
-    {links.map(({ href, label, page }) => (
+<nav class="flex items-center justify-between px-4 py-3 border-b border-border/60 bg-sidebar/90 backdrop-blur-md z-40 lg:fixed lg:inset-y-0 lg:left-0 lg:w-56 lg:flex-col lg:items-stretch lg:justify-start lg:border-r lg:border-b-0 lg:py-8 lg:px-4">
+  <!-- Logo / Brand -->
+  <a href="/" class="hidden lg:flex flex-col mb-6 px-2 group" aria-label="RSS Reader home">
+    <div class="flex items-center gap-2 mb-0.5">
+      <div class="h-6 w-6 rounded-md bg-primary flex items-center justify-center shrink-0">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 text-primary-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/>
+        </svg>
+      </div>
+      <span class="text-sm font-bold tracking-tight text-sidebar-foreground">RSS Reader</span>
+    </div>
+  </a>
+
+  <!-- Mobile brand -->
+  <a href="/" class="lg:hidden flex items-center gap-2">
+    <div class="h-6 w-6 rounded-md bg-primary flex items-center justify-center shrink-0">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 text-primary-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/>
+      </svg>
+    </div>
+    <span class="text-sm font-bold tracking-tight text-sidebar-foreground">RSS Reader</span>
+  </a>
+
+  <!-- Nav links -->
+  <div class="flex gap-1 lg:flex-col lg:gap-0.5 lg:flex-1">
+    {links.map(({ href, label, page, icon }) => (
       <a
         href={href}
-        class={`text-sm transition-colors lg:px-3 lg:py-2 lg:rounded-md ${
+        class={`flex items-center gap-2.5 text-sm px-3 py-2 rounded-md transition-all duration-150 ${
           currentPage === page
-            ? 'font-medium text-foreground lg:bg-accent'
-            : 'text-muted-foreground hover:text-foreground lg:hover:bg-accent/60'
+            ? 'bg-accent text-accent-foreground font-medium'
+            : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
         }`}
       >
+        {icon === 'rss' && (
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/>
+          </svg>
+        )}
+        {icon === 'settings' && (
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>
+          </svg>
+        )}
+        {icon === 'activity' && (
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/>
+          </svg>
+        )}
         {label}
       </a>
     ))}
   </div>
-  <div class="flex items-center gap-2 lg:flex-col lg:items-start lg:gap-3 lg:pb-2">
+
+  <!-- Theme & mode controls -->
+  <div class="flex items-center gap-2 lg:flex-col lg:items-start lg:gap-3 lg:pb-2 lg:border-t lg:border-border/40 lg:pt-4">
     <ThemeSelector client:load />
     <ModeToggle client:load />
   </div>
