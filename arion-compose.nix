@@ -13,6 +13,15 @@ _: {
       ];
     };
 
+    nats.service = {
+      image = "nats:2.14.3";
+      ports = [
+        "4222:4222"
+        "6222:6222"
+        "8222:8222"
+      ];
+    };
+
     rss_notify.service = {
       image = "rss_notify:latest";
       ports = [
