@@ -188,7 +188,7 @@
             buildInputs = [
               pkgs.arion
               pkgs.docker-compose
-              pkgs.nixfmt-rfc-style
+              pkgs.nixfmt
               govendor
               (mkDevHelp {
                 serviceName = "root";

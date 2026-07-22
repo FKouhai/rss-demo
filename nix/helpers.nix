@@ -31,6 +31,7 @@ let
       name = "${name}-lint";
       inherit src;
       dontBuild = true;
+      __noChroot = true;
       doCheck = true;
       nativeBuildInputs = [
         golangci-lint
@@ -44,7 +45,7 @@ let
   pre-commit-check = git-hooks.lib.${system}.run {
     src = root;
     hooks = {
-      nixfmt-rfc-style.enable = true;
+      nixfmt.enable = true;
       commitizen.enable = true;
       convco.enable = true;
       # Use go-overlay-provided packages for consistency with the build toolchain.

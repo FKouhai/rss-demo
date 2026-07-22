@@ -209,6 +209,65 @@
   --sidebar-border: oklch(1 0 0 / 9%);
 }
 
+/* ── Better Auth ────────────────────────────────────────────────── */
+/* Inspired by better-auth.com: neutral/grey base, sharp corners, orange accent */
+[data-theme="better-auth"] {
+  --radius: 0.25rem;
+  --blob-1: oklch(0.72 0.20 48);
+  --blob-2: oklch(0.60 0.15 55);
+  /* Light mode: crisp warm white with subtle warmth */
+  --background: oklch(0.985 0.003 90);
+  --foreground: oklch(0.10 0.008 90);
+  --card: oklch(0.995 0.001 90);
+  --card-foreground: oklch(0.10 0.008 90);
+  --popover: oklch(0.995 0.001 90);
+  --popover-foreground: oklch(0.10 0.008 90);
+  --primary: oklch(0.64 0.20 48);       /* vivid orange */
+  --primary-foreground: oklch(0.99 0.001 90);
+  --secondary: oklch(0.92 0.006 90);
+  --secondary-foreground: oklch(0.10 0.008 90);
+  --muted: oklch(0.92 0.005 90);
+  --muted-foreground: oklch(0.46 0.010 90);
+  --accent: oklch(0.91 0.008 90);
+  --accent-foreground: oklch(0.10 0.008 90);
+  --destructive: oklch(0.577 0.22 25);
+  --border: oklch(0.86 0.007 90);
+  --input: oklch(0.86 0.007 90);
+  --ring: oklch(0.64 0.20 48);
+  --sidebar: oklch(0.96 0.005 90);
+  --sidebar-foreground: oklch(0.10 0.008 90);
+  --sidebar-accent: oklch(0.91 0.008 90);
+  --sidebar-accent-foreground: oklch(0.10 0.008 90);
+  --sidebar-border: oklch(0.86 0.007 90);
+}
+
+[data-theme="better-auth"].dark {
+  /* Dark mode: very dark charcoal — almost black, not blue */
+  --background: oklch(0.095 0.004 90);
+  --foreground: oklch(0.975 0.004 90);
+  --card: oklch(0.13 0.004 90);
+  --card-foreground: oklch(0.975 0.004 90);
+  --popover: oklch(0.13 0.004 90);
+  --popover-foreground: oklch(0.975 0.004 90);
+  --primary: oklch(0.70 0.21 48);       /* brighter orange in dark */
+  --primary-foreground: oklch(0.095 0.004 90);
+  --secondary: oklch(0.19 0.005 90);
+  --secondary-foreground: oklch(0.975 0.004 90);
+  --muted: oklch(0.19 0.004 90);
+  --muted-foreground: oklch(0.58 0.006 90);
+  --accent: oklch(0.20 0.005 90);
+  --accent-foreground: oklch(0.975 0.004 90);
+  --destructive: oklch(0.65 0.22 25);
+  --border: oklch(0.22 0.005 90);
+  --input: oklch(0.22 0.005 90);
+  --ring: oklch(0.70 0.21 48);
+  --sidebar: oklch(0.11 0.004 90);
+  --sidebar-foreground: oklch(0.975 0.004 90);
+  --sidebar-accent: oklch(0.20 0.005 90);
+  --sidebar-accent-foreground: oklch(0.975 0.004 90);
+  --sidebar-border: oklch(0.22 0.005 90);
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -285,4 +344,46 @@
 
 .dark .feeds-content a:hover {
   opacity: 0.8;
+}
+
+/* ── Glassmorphism Custom Utilities ──────────────────────────────── */
+.glass-card {
+  background: color-mix(in srgb, var(--card) 65%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+  box-shadow: 0 8px 30px 0 rgba(0, 0, 0, 0.03);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-card:hover {
+  background: color-mix(in srgb, var(--card) 75%, transparent);
+  border-color: color-mix(in srgb, var(--primary) 35%, transparent);
+  box-shadow: 0 12px 35px 0 rgba(0, 0, 0, 0.06);
+}
+
+.glass-panel {
+  background: color-mix(in srgb, var(--background) 70%, transparent);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-color: color-mix(in srgb, var(--border) 50%, transparent);
+}
+
+/* ── Custom Drawer Animations ────────────────────────────────────── */
+@keyframes slideOver {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+
+.animate-slide-over {
+  animation: slideOver 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.15s ease-out both;
 }

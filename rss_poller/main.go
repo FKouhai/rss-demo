@@ -18,22 +18,6 @@ import (
 
 var serviceFQDN string
 
-func init() {
-	if err := bootstrap.WaitForLocator(); err != nil {
-		log.ErrorFmt("Locator service not available: %v", err)
-		return
-	}
-
-	serviceFQDN = os.Getenv("SERVICE_FQDN")
-	if serviceFQDN == "" {
-		serviceFQDN = "poller:3000"
-	}
-
-	if err := bootstrap.Init(context.Background(), "poller", serviceFQDN); err != nil {
-		log.ErrorFmt("Failed to register poller with locator: %v", err)
-	}
-}
-
 // hostFromFQDN extracts the host:port from a raw address that may be a full
 // URL (e.g. "http://notify.svc:3000") or already a bare host:port.
 func hostFromFQDN(fqdn string) string {
@@ -77,6 +61,11 @@ func startHeartbeat(tracer trace.Tracer) {
 }
 
 func main() {
+	serviceFQDN = os.Getenv("SERVICE_FQDN")
+	if serviceFQDN == "" {
+		serviceFQDN = "poller:3000"
+	}
+
 	tp, err := instrumentation.InitTracer("poller")
 	if err != nil {
 		log.Error(err.Error())
@@ -87,6 +76,15 @@ func main() {
 			log.Debug(err.Error())
 		}
 	}()
+
+	// Register with the locator. We wait for it first.
+	if err := bootstrap.WaitForLocator(); err != nil {
+		log.ErrorFmt("Locator service not available: %v", err)
+	} else {
+		if err := bootstrap.Init(context.Background(), "poller", serviceFQDN); err != nil {
+			log.ErrorFmt("Failed to register poller with locator: %v", err)
+		}
+	}
 
 	tracer := instrumentation.GetTracer("poller")
 

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/mmcdole/gofeed"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace/noop"
@@ -33,6 +34,33 @@ const mockRSSFeedContent = `
         <description>Description for Test Item 2</description>
         <content:encoded><![CDATA[Content for Test Item 2]]></content:encoded>
         <link>http://example.com/item2</link>
+    </item>
+</channel>
+</rss>
+`
+
+const mockRSSFeedContentWithNewItem = `
+<rss version="2.0">
+<channel>
+    <title>Test RSS Feed</title>
+    <description>This is a test RSS feed.</description>
+    <item>
+        <title>Test Item 1</title>
+        <description>Description for Test Item 1</description>
+        <content:encoded><![CDATA[Content for Test Item 1]]></content:encoded>
+        <link>http://example.com/item1</link>
+    </item>
+    <item>
+        <title>Test Item 2</title>
+        <description>Description for Test Item 2</description>
+        <content:encoded><![CDATA[Content for Test Item 2]]></content:encoded>
+        <link>http://example.com/item2</link>
+    </item>
+    <item>
+        <title>Test Item 3</title>
+        <description>Description for Test Item 3</description>
+        <content:encoded><![CDATA[Content for Test Item 3]]></content:encoded>
+        <link>http://example.com/item3</link>
     </item>
 </channel>
 </rss>
@@ -482,6 +510,379 @@ func TestPollAndNotifySeenDedup(t *testing.T) {
 
 	if len(seen) != firstSeenCount {
 		t.Errorf("expected seen count to stay %d after second poll, got %d", firstSeenCount, len(seen))
+	}
+}
+
+func TestPollAndNotifyTriggersNotificationForNewItem(t *testing.T) {
+	// currentFeed is swapped between polls to simulate a new item appearing.
+	currentFeed := mockRSSFeedContent
+	rssServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/rss+xml")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(currentFeed))
+	}))
+	defer rssServer.Close()
+
+	seen = make(map[string]bool)
+	globalFeed = nil
+	cfg.RSSFeeds = []string{rssServer.URL}
+	setNotificationReceiver("") // suppress notifications on first poll
+	t.Cleanup(func() {
+		globalFeed = nil
+		seen = make(map[string]bool)
+		setNotificationReceiver("")
+		wsMu.Lock()
+		wsConn = nil
+		wsMu.Unlock()
+	})
+
+	// First poll: items 1 and 2 are marked seen; no notification sent because receiver is empty.
+	pollAndNotify(time.Now())
+	if !seen["http://example.com/item1"] || !seen["http://example.com/item2"] {
+		t.Fatal("expected item1 and item2 to be in seen after first poll")
+	}
+
+	// Simulate a new item appearing in the feed.
+	currentFeed = mockRSSFeedContentWithNewItem
+
+	// Mock WebSocket server captures the first notification message.
+	msgCh := make(chan []byte, 1)
+	wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			t.Logf("websocket.Accept: %v", err)
+			return
+		}
+		defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_, msg, err := conn.Read(ctx)
+		if err != nil {
+			t.Logf("conn.Read: %v", err)
+			return
+		}
+		msgCh <- msg
+	}))
+	defer wsServer.Close()
+
+	// Dial the mock server and store the client connection so sendNotification uses it.
+	wsURL := "ws" + strings.TrimPrefix(wsServer.URL, "http")
+	conn, _, err := websocket.Dial(context.Background(), wsURL, nil)
+	if err != nil {
+		t.Fatalf("failed to dial mock WS server: %v", err)
+	}
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+	wsMu.Lock()
+	wsConn = conn
+	wsMu.Unlock()
+
+	setNotificationReceiver("https://fake-discord-webhook.example.com")
+
+	// Second poll: item3 is new — pollAndNotify should detect it and fire a notification.
+	pollAndNotify(time.Now())
+
+	if !seen["http://example.com/item3"] {
+		t.Error("expected item3 to be in seen after second poll (new item not detected)")
+	}
+
+	select {
+	case msg := <-msgCh:
+		var notification discordNotification
+		if err := json.Unmarshal(msg, &notification); err != nil {
+			t.Fatalf("failed to unmarshal notification payload: %v", err)
+		}
+		found := false
+		for _, link := range notification.Content {
+			if link == "http://example.com/item3" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected notification to contain item3 link, got: %v", notification.Content)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for notification to be sent for new item")
+	}
+}
+
+func TestConfigGetHandler(t *testing.T) {
+	cfgMu.Lock()
+	cfg.RSSFeeds = []string{"http://example.com/feed1", "http://example.com/feed2"}
+	cfgMu.Unlock()
+	t.Cleanup(func() {
+		cfgMu.Lock()
+		cfg.RSSFeeds = nil
+		cfgMu.Unlock()
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/config/feeds", nil)
+	rr := httptest.NewRecorder()
+	ConfigGetHandler(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rr.Code)
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("expected Content-Type application/json, got %q", ct)
+	}
+	var got ConfigStruct
+	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	want := []string{"http://example.com/feed1", "http://example.com/feed2"}
+	if !reflect.DeepEqual(got.RSSFeeds, want) {
+		t.Errorf("expected feeds %v, got %v", want, got.RSSFeeds)
+	}
+}
+
+func TestWSConnected(t *testing.T) {
+	wsMu.Lock()
+	wsConn = nil
+	wsMu.Unlock()
+	t.Cleanup(func() {
+		wsMu.Lock()
+		wsConn = nil
+		wsMu.Unlock()
+	})
+
+	if WSConnected() {
+		t.Error("expected WSConnected false when wsConn is nil")
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_, _, _ = conn.Read(ctx)
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	clientConn, _, err := websocket.Dial(context.Background(), wsURL, nil)
+	if err != nil {
+		t.Fatalf("failed to dial WS server: %v", err)
+	}
+	defer func() { _ = clientConn.Close(websocket.StatusNormalClosure, "") }()
+
+	wsMu.Lock()
+	wsConn = clientConn
+	wsMu.Unlock()
+
+	if !WSConnected() {
+		t.Error("expected WSConnected true when wsConn is set")
+	}
+}
+
+func TestConfigFilePath(t *testing.T) {
+	t.Run("Default", func(t *testing.T) {
+		t.Setenv("CONFIG_FILE", "")
+		if got := configFilePath(); got != "/etc/rss-poller/config.json" {
+			t.Errorf("expected default path, got %q", got)
+		}
+	})
+	t.Run("EnvOverride", func(t *testing.T) {
+		t.Setenv("CONFIG_FILE", "/tmp/test-config.json")
+		if got := configFilePath(); got != "/tmp/test-config.json" {
+			t.Errorf("expected /tmp/test-config.json, got %q", got)
+		}
+	})
+}
+
+func TestIsRegistered(t *testing.T) {
+	t.Run("ReturnsTrueFor200", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer srv.Close()
+		if !isRegistered(context.Background(), srv.URL, "poller") {
+			t.Error("expected true for 200 response")
+		}
+	})
+	t.Run("ReturnsFalseForNon200", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer srv.Close()
+		if isRegistered(context.Background(), srv.URL, "poller") {
+			t.Error("expected false for 404 response")
+		}
+	})
+	t.Run("ReturnsFalseOnConnectionError", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+		srv.Close() // immediately close to force a connection refused error
+		if isRegistered(context.Background(), srv.URL, "poller") {
+			t.Error("expected false on connection error")
+		}
+	})
+}
+
+func TestReadyHandler(t *testing.T) {
+	t.Run("LOCATORURLNotSet", func(t *testing.T) {
+		t.Setenv("LOCATOR_URL", "")
+		req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+		rr := httptest.NewRecorder()
+		ReadyHandler(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", rr.Code)
+		}
+	})
+	t.Run("PollerNotRegistered", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer srv.Close()
+		t.Setenv("LOCATOR_URL", srv.URL)
+		req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+		rr := httptest.NewRecorder()
+		ReadyHandler(rr, req)
+		if rr.Code != http.StatusServiceUnavailable {
+			t.Errorf("expected 503, got %d", rr.Code)
+		}
+	})
+	t.Run("NotifyNotRegistered", func(t *testing.T) {
+		// First call (poller check) → 200; second call (notify check) → 404.
+		callCount := 0
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			callCount++
+			if callCount == 1 {
+				w.WriteHeader(http.StatusOK)
+			} else {
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		defer srv.Close()
+		t.Setenv("LOCATOR_URL", srv.URL)
+		req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+		rr := httptest.NewRecorder()
+		ReadyHandler(rr, req)
+		if rr.Code != http.StatusServiceUnavailable {
+			t.Errorf("expected 503, got %d", rr.Code)
+		}
+	})
+	t.Run("AllRegistered", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer srv.Close()
+		t.Setenv("LOCATOR_URL", srv.URL)
+		req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+		rr := httptest.NewRecorder()
+		ReadyHandler(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", rr.Code)
+		}
+	})
+}
+
+func TestToJSONEdgeCases(t *testing.T) {
+	t.Run("NilFeeds", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := toJSON(context.Background(), &buf, nil); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if s := strings.TrimSpace(buf.String()); s != "null" {
+			t.Errorf("expected null, got %q", s)
+		}
+	})
+	t.Run("EmptyFeeds", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := toJSON(context.Background(), &buf, []*gofeed.Feed{}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if s := strings.TrimSpace(buf.String()); s != "null" {
+			t.Errorf("expected null for empty feeds slice, got %q", s)
+		}
+	})
+	t.Run("FeedWithNoItems", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := toJSON(context.Background(), &buf, []*gofeed.Feed{{Title: "Empty Feed"}}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if s := strings.TrimSpace(buf.String()); s != "null" {
+			t.Errorf("expected null for feed with no items, got %q", s)
+		}
+	})
+}
+
+func TestParseRSSAllFeedsFail(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	_, err := ParseRSS(context.Background(), []string{srv.URL})
+	if err == nil {
+		t.Error("expected error when all feeds fail to parse, got nil")
+	}
+}
+
+func TestPollAndNotifyParseFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	seen = make(map[string]bool)
+	globalFeed = nil
+	cfg.RSSFeeds = []string{srv.URL}
+	t.Cleanup(func() {
+		seen = make(map[string]bool)
+		globalFeed = nil
+	})
+
+	pollAndNotify(time.Now())
+
+	feedMutex.RLock()
+	gf := globalFeed
+	feedMutex.RUnlock()
+	if gf != nil {
+		t.Errorf("expected globalFeed to remain nil after parse failure, got %v", gf)
+	}
+
+	seenMu.Lock()
+	count := len(seen)
+	seenMu.Unlock()
+	if count != 0 {
+		t.Errorf("expected seen to remain empty after parse failure, got %d entries", count)
+	}
+}
+
+func TestRSSHandlerCORSHeaders(t *testing.T) {
+	mockServer := startMockRSSFeedServer()
+	defer mockServer.Close()
+
+	feedMutex.Lock()
+	globalFeed = nil
+	feedMutex.Unlock()
+	cfg.RSSFeeds = []string{mockServer.URL}
+	t.Cleanup(func() {
+		feedMutex.Lock()
+		globalFeed = nil
+		feedMutex.Unlock()
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/rss", nil)
+	rr := httptest.NewRecorder()
+	RSSHandler(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	headers := []struct{ name, want string }{
+		{"Access-Control-Allow-Origin", "http://localhost:4321"},
+		{"Access-Control-Allow-Methods", "GET, POST, OPTIONS"},
+		{"Access-Control-Allow-Headers", "Content-Type"},
+		{"Content-Type", "application/json"},
+	}
+	for _, h := range headers {
+		if got := rr.Header().Get(h.name); got != h.want {
+			t.Errorf("header %q: want %q, got %q", h.name, h.want, got)
+		}
 	}
 }
 
