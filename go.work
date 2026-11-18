@@ -5,3 +5,5 @@ use .
 use ./rss_poller
 
 use ./rss_notify
+
+use ./rss_outbox
