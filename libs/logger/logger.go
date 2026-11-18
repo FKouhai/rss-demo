@@ -40,17 +40,17 @@ func Error(message string, fields ...zap.Field) {
 // InfoFmt -> Info formatted logger
 func InfoFmt(message string, args ...any) {
 	s := zapLog.Sugar()
-	s.Infof(message, args)
+	s.Infof(message, args...)
 }
 
 // ErrorFmt -> Error formatted logger
 func ErrorFmt(message string, args ...any) {
 	s := zapLog.Sugar()
-	s.Errorf(message, args)
+	s.Errorf(message, args...)
 }
 
 // DebugFmt -> Debug formatted logger
 func DebugFmt(message string, args ...any) {
 	s := zapLog.Sugar()
-	s.Debugf(message, args)
+	s.Debugf(message, args...)
 }
