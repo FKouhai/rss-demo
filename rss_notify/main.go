@@ -8,73 +8,46 @@ package main
 
 import (
 	"context"
-	"net/http"
+	"errors"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
-	"github.com/FKouhai/rss-demo/libs/bootstrap"
-	"github.com/FKouhai/rss-demo/libs/instrumentation"
-	log "github.com/FKouhai/rss-demo/libs/logger"
-	"github.com/FKouhai/rss-notify/methods"
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
+	"github.com/FKouhai/rss-notify/cmd"
 )
 
-var serviceFQDN string
+// shutdownGrace bounds how long Shutdown may take (OTEL flush + HTTP drain).
+const shutdownGrace = 2 * time.Second
 
-func startHeartbeat(tracer trace.Tracer) {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-	for range ticker.C {
-		ctx, span := tracer.Start(context.Background(), "bootstrap.heartbeat",
-			trace.WithSpanKind(trace.SpanKindInternal))
-		span.SetAttributes(attribute.String("service", "notify"))
-		if err := bootstrap.Init(ctx, "notify", serviceFQDN); err != nil {
-			span.RecordError(err)
-			log.ErrorFmt("heartbeat re-registration failed: %v", err)
-		}
-		span.End()
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	cfg := cmd.Config{
+		ServiceFQDN: os.Getenv("SERVICE_FQDN"),
+		HTTPAddr:    envOr("NOTIFY_HTTP_ADDR", ":3000"),
+		SkipLocator: os.Getenv("NOTIFY_SKIP_LOCATOR") == "1",
+		SkipTracer:  os.Getenv("NOTIFY_SKIP_TRACER") == "1",
+	}
+
+	app, err := cmd.Run(ctx, cfg)
+	if err != nil {
+		os.Exit(1)
+	}
+
+	<-ctx.Done()
+	// Give the exporter a brief grace window before shutdown.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
+	defer cancel()
+	if err := app.Shutdown(shutdownCtx); err != nil && !errors.Is(err, context.DeadlineExceeded) {
+		os.Exit(1)
 	}
 }
 
-func main() {
-	serviceFQDN = os.Getenv("SERVICE_FQDN")
-	if serviceFQDN == "" {
-		serviceFQDN = "notify:3000"
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
 	}
-
-	tp, err := instrumentation.InitTracer("notify")
-	if err != nil {
-		log.Error(err.Error())
-	}
-	defer func() {
-		// Add a small delay to ensure traces are flushed before shutdown
-		time.Sleep(2 * time.Second)
-		if err := tp.Shutdown(context.Background()); err != nil {
-			log.Debug(err.Error())
-		}
-	}()
-
-	// Wait for locator and register the service.
-	if err := bootstrap.WaitForLocator(); err != nil {
-		log.ErrorFmt("Locator service not available: %v", err)
-	} else {
-		if err := bootstrap.Init(context.Background(), "notify", serviceFQDN); err != nil {
-			log.ErrorFmt("Failed to register notify service with locator: %v", err)
-		}
-	}
-
-	tracer := instrumentation.GetTracer("notify")
-
-	// Re-register with the locator on a heartbeat so a locator restart self-heals.
-	go startHeartbeat(tracer)
-
-	http.HandleFunc("/ws", methods.WSHandler)
-	http.HandleFunc("/push", methods.DeprecatedPushHandler)
-	http.HandleFunc("/healthz", methods.HealthzHandler)
-	http.HandleFunc("/ready", methods.ReadyHandler)
-	log.InfoFmt("starting server on port %d", 3000)
-	// nolint
-	http.ListenAndServe(":3000", otelhttp.NewHandler(http.DefaultServeMux, "rss_notify"))
+	return def
 }
