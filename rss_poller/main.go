@@ -2,124 +2,46 @@ package main
 
 import (
 	"context"
-	"net/http"
-	"net/url"
+	"errors"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
-	"github.com/FKouhai/rss-demo/libs/bootstrap"
-	"github.com/FKouhai/rss-demo/libs/instrumentation"
-	log "github.com/FKouhai/rss-demo/libs/logger"
-	"github.com/FKouhai/rss-poller/handlers"
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
+	"github.com/FKouhai/rss-poller/cmd"
 )
 
-var serviceFQDN string
-
-// hostFromFQDN extracts the host:port from a raw address that may be a full
-// URL (e.g. "http://notify.svc:3000") or already a bare host:port.
-func hostFromFQDN(fqdn string) string {
-	if u, err := url.Parse(fqdn); err == nil && u.Host != "" {
-		return u.Host
-	}
-	return fqdn
-}
-
-func discoverNotifyService() {
-	notifyFQDN, err := bootstrap.GetServiceFQDN(context.Background(), "notify")
-	if err != nil {
-		log.ErrorFmt("Failed to discover notify service. Falling back to NOTIFICATION_SENDER environment variable. Error: %v", err)
-		addr := os.Getenv("NOTIFICATION_SENDER")
-		if addr == "" {
-			log.Error("NOTIFICATION_SENDER environment variable not set. Notifications will not be sent.")
-			return
-		}
-		log.InfoFmt("Using NOTIFICATION_SENDER from environment as fallback: %s", addr)
-		handlers.ConnectNotifyWS(context.Background(), addr)
-		return
-	}
-
-	log.InfoFmt("Discovered notify service at: %s", notifyFQDN)
-	handlers.ConnectNotifyWS(context.Background(), hostFromFQDN(notifyFQDN))
-}
-
-func startHeartbeat(tracer trace.Tracer) {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-	for range ticker.C {
-		ctx, span := tracer.Start(context.Background(), "bootstrap.heartbeat",
-			trace.WithSpanKind(trace.SpanKindInternal))
-		span.SetAttributes(attribute.String("service", "poller"))
-		if err := bootstrap.Init(ctx, "poller", serviceFQDN); err != nil {
-			span.RecordError(err)
-			log.ErrorFmt("heartbeat re-registration failed: %v", err)
-		}
-		span.End()
-	}
-}
+// shutdownGrace bounds how long Shutdown may take (OTEL flush + HTTP drain).
+const shutdownGrace = 2 * time.Second
 
 func main() {
-	serviceFQDN = os.Getenv("SERVICE_FQDN")
-	if serviceFQDN == "" {
-		serviceFQDN = "poller:3000"
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	cfg := cmd.Config{
+		ServiceFQDN: os.Getenv("SERVICE_FQDN"),
+		HTTPAddr:    envOr("POLLER_HTTP_ADDR", ":3000"),
+		SkipLocator: os.Getenv("POLLER_SKIP_LOCATOR") == "1",
+		SkipTracer:  os.Getenv("POLLER_SKIP_TRACER") == "1",
 	}
 
-	tp, err := instrumentation.InitTracer("poller")
+	app, err := cmd.Run(ctx, cfg)
 	if err != nil {
-		log.Error(err.Error())
-	}
-	defer func() {
-		time.Sleep(2 * time.Second)
-		if err := tp.Shutdown(context.Background()); err != nil {
-			log.Debug(err.Error())
-		}
-	}()
-
-	// Register with the locator. We wait for it first.
-	if err := bootstrap.WaitForLocator(); err != nil {
-		log.ErrorFmt("Locator service not available: %v", err)
-	} else {
-		if err := bootstrap.Init(context.Background(), "poller", serviceFQDN); err != nil {
-			log.ErrorFmt("Failed to register poller with locator: %v", err)
-		}
+		os.Exit(1)
 	}
 
-	tracer := instrumentation.GetTracer("poller")
+	<-ctx.Done()
+	// Give the exporter a brief grace window before shutdown.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
+	defer cancel()
+	if err := app.Shutdown(shutdownCtx); err != nil && !errors.Is(err, context.DeadlineExceeded) {
+		os.Exit(1)
+	}
+}
 
-	// Load persisted config on startup; starts polling immediately if feeds are found.
-	handlers.LoadConfig(context.Background())
-
-	// Re-register with the locator on a heartbeat so a locator restart self-heals.
-	go startHeartbeat(tracer)
-
-	// Discover notify service in the background with retries, so a slow cluster
-	// start doesn't permanently break notifications.
-	go func() {
-		const maxAttempts = 10
-		backoff := 3 * time.Second
-		for i := range maxAttempts {
-			discoverNotifyService()
-			if handlers.WSConnected() {
-				return
-			}
-			log.InfoFmt("notify service not yet discoverable, retrying in %v (attempt %d/%d)", backoff, i+1, maxAttempts)
-			time.Sleep(backoff)
-			if backoff < 30*time.Second {
-				backoff *= 2
-			}
-		}
-		log.Error("failed to discover notify service after all attempts; notifications will not be sent")
-	}()
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/config", handlers.ConfigHandler)
-	mux.HandleFunc("/config/feeds", handlers.ConfigGetHandler)
-	mux.HandleFunc("/healthz", handlers.HealthzHandler)
-	mux.HandleFunc("/ready", handlers.ReadyHandler)
-	mux.HandleFunc("/rss", handlers.RSSHandler)
-	log.InfoFmt("starting server on port %d", 3000)
-	// nolint
-	http.ListenAndServe(":3000", otelhttp.NewHandler(mux, "rss_poller"))
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
 }
