@@ -73,8 +73,7 @@ func (c *Client) Consume(
 		opt = opts[0]
 	}
 
-	tracer := instrumentation.GetTracer("pubsub")
-	regCtx, regSpan := tracer.Start(ctx, "pubsub.Consume", trace.WithSpanKind(trace.SpanKindInternal))
+	regCtx, regSpan := tracer.Start(ctx, "pubsub.Consume")
 	defer regSpan.End()
 	setConsumeRegistrationAttrs(regSpan, streamName, consumerName)
 
@@ -98,7 +97,7 @@ func (c *Client) Consume(
 
 // processMessage is the per-message adapter body: extract trace, start a
 // consumer span, invoke the handler, and map the returned decision to an ack.
-func processMessage(tracer trace.Tracer, handler MessageHandler, msg jetstream.Msg, opts ConsumeOptions) {
+func processMessage(tracer instrumentation.Tracer, handler MessageHandler, msg jetstream.Msg, opts ConsumeOptions) {
 	spanCtx, span := startConsumerSpan(tracer, msg)
 	defer span.End()
 
@@ -109,12 +108,12 @@ func processMessage(tracer trace.Tracer, handler MessageHandler, msg jetstream.M
 // startConsumerSpan extracts the propagated trace context from the message
 // headers (the mirror of Publish's Inject) and starts a SpanKindConsumer span
 // linked to that parent, decorated with NATS messaging attributes.
-func startConsumerSpan(tracer trace.Tracer, msg jetstream.Msg) (context.Context, trace.Span) {
+func startConsumerSpan(tracer instrumentation.Tracer, msg jetstream.Msg) (context.Context, trace.Span) {
 	parentCtx := otel.GetTextMapPropagator().Extract(
 		context.Background(),
 		propagation.HeaderCarrier(http.Header(msg.Headers())),
 	)
-	spanCtx, span := tracer.Start(parentCtx, "pubsub.Consume.message", trace.WithSpanKind(trace.SpanKindConsumer))
+	spanCtx, span := tracer.StartConsumer(parentCtx, "pubsub.Consume.message")
 	span.SetAttributes(
 		attribute.String("messaging.system", "nats"),
 		attribute.String("messaging.destination", msg.Subject()),

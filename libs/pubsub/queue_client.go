@@ -9,7 +9,6 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
 )
 
 // Client defines the shape of a re-usable nats client
@@ -17,6 +16,9 @@ type Client struct {
 	Connection *nats.Conn
 	JsContext  jetstream.JetStream
 }
+
+// tracer is the service-scoped helper for pubsub spans.
+var tracer = instrumentation.ForService("pubsub")
 
 // RssOptions opts passed down to the NATS client
 // Using a struct allows for a common signature across services
@@ -89,8 +91,7 @@ func (c *Client) EnsureStream(ctx context.Context, cfg jetstream.StreamConfig) (
 		return nil, errors.New("jetstream context not available")
 	}
 
-	tracer := instrumentation.GetTracer("pubsub")
-	spanCtx, span := tracer.Start(ctx, "pubsub.EnsureStream", trace.WithSpanKind(trace.SpanKindInternal))
+	spanCtx, span := tracer.Start(ctx, "pubsub.EnsureStream")
 	defer span.End()
 
 	span.SetAttributes(
@@ -111,8 +112,7 @@ func (c *Client) EnsureConsumer(ctx context.Context, streamName string, cfg jets
 		return nil, errors.New("jetstream context not available")
 	}
 
-	tracer := instrumentation.GetTracer("pubsub")
-	spanCtx, span := tracer.Start(ctx, "pubsub.EnsureConsumer", trace.WithSpanKind(trace.SpanKindInternal))
+	spanCtx, span := tracer.Start(ctx, "pubsub.EnsureConsumer")
 	defer span.End()
 
 	span.SetAttributes(

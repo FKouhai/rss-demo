@@ -5,13 +5,11 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/FKouhai/rss-demo/libs/instrumentation"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/trace"
 )
 
 // Publish wrapper for producers
@@ -25,8 +23,7 @@ func (c *Client) Publish(ctx context.Context, subject string, payload []byte, ms
 	}
 
 	// Starting tracer
-	tracer := instrumentation.GetTracer("pubsub")
-	spanCtx, span := tracer.Start(ctx, "pubsub.Publish", trace.WithSpanKind(trace.SpanKindProducer))
+	spanCtx, span := tracer.StartProducer(ctx, "pubsub.Publish")
 	defer span.End()
 
 	// common attributes for the producers
