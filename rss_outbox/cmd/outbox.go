@@ -7,10 +7,14 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/FKouhai/rss-demo/libs/instrumentation"
 	"github.com/FKouhai/rss-demo/libs/pubsub"
 	"github.com/FKouhai/rss-outbox/store"
 	"github.com/nats-io/nats.go/jetstream"
 )
+
+// tracer is the service-scoped helper for outbox spans.
+var tracer = instrumentation.ForService("outbox")
 
 type Outbox struct {
 	nc          *pubsub.Client
@@ -54,12 +58,16 @@ func (o *Outbox) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("outbox replay get pending: %w", err)
 	}
-
+	// One root span for the whole replay so a cold start reads as a single
+	// trace instead of N orphan publishes.
+	repCtx, repSpan := tracer.Start(ctx, "outbox.Replay")
 	for _, e := range pending {
-		if err := o.dispatch(ctx, e); err != nil {
+		if err := o.dispatch(repCtx, e); err != nil {
+			repSpan.End()
 			return err
 		}
 	}
+	repSpan.End()
 
 	feeds, err := o.nc.Consume(ctx, string(pubsub.StreamFeeds), "outbox-feeds", o.handleFeed)
 	if err != nil {

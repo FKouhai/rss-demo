@@ -11,12 +11,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/FKouhai/rss-demo/libs/instrumentation"
 	log "github.com/FKouhai/rss-demo/libs/logger"
 	"github.com/mmcdole/gofeed"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
-	"go.uber.org/zap"
 )
 
 // ConfigStruct contains the accepted config fields that this microservice will use
@@ -64,7 +63,7 @@ var (
 // A child span is created and its context is injected as W3C traceparent headers so the
 // locator's RequestTracing middleware can parent its own spans to this trace.
 func isRegistered(ctx context.Context, locatorURL, service string) bool {
-	callCtx, span := startSpan(ctx, "helper.isRegistered", trace.SpanKindClient)
+	callCtx, span := tracer.StartClient(ctx, "helper.isRegistered")
 	defer span.End()
 	span.SetAttributes(
 		attribute.String("locator.service", service),
@@ -99,9 +98,9 @@ func isRegistered(ctx context.Context, locatorURL, service string) bool {
 func ReadyHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	ctx, span := startSpan(r.Context(), "handlers.ReadyHandler", trace.SpanKindServer)
+	ctx, span := tracer.StartServer(r.Context(), "handlers.ReadyHandler")
 	defer span.End()
-	log.Info("connection to /ready established", zap.String("trace_id", span.SpanContext().TraceID().String()))
+	log.InfoCtx(ctx, "connection to /ready established")
 
 	locatorURL := os.Getenv("LOCATOR_URL")
 	if locatorURL == "" {
@@ -123,9 +122,9 @@ func ReadyHandler(w http.ResponseWriter, r *http.Request) {
 // It also starts a new background poller with the new configuration.
 func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	_, span := startSpan(ctx, "handlers.ConfigHandler", trace.SpanKindServer)
+	_, span := tracer.StartServer(ctx, "handlers.ConfigHandler")
 	defer span.End()
-	log.Info("accepted connection", zap.String("trace_id", span.SpanContext().TraceID().String()))
+	log.InfoCtx(ctx, "accepted connection")
 
 	if err := handleConfigPayload(r); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -136,7 +135,7 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 	persistConfig(ctx)
 	startPolling()
 
-	recordHTTPSpan(span, r.Method, http.StatusOK)
+	instrumentation.HTTP(span, r.Method, http.StatusOK)
 	span.SetAttributes(attribute.Int("feeds.count", len(getConfigSnapshot().RSSFeeds)))
 	w.WriteHeader(http.StatusOK)
 }
@@ -144,12 +143,12 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 // ConfigGetHandler returns the feed URLs currently being polled.
 // The frontend uses this to stay in sync with the active config.
 func ConfigGetHandler(w http.ResponseWriter, r *http.Request) {
-	_, span := startSpan(r.Context(), "handlers.ConfigGetHandler", trace.SpanKindServer)
+	_, span := tracer.StartServer(r.Context(), "handlers.ConfigGetHandler")
 	defer span.End()
-	log.Info("connection to GET /config/feeds established", zap.String("trace_id", span.SpanContext().TraceID().String()))
+	log.InfoCtx(r.Context(), "connection to GET /config/feeds established")
 
 	snapshot := getConfigSnapshot()
-	recordHTTPSpan(span, r.Method, http.StatusOK)
+	instrumentation.HTTP(span, r.Method, http.StatusOK)
 	span.SetAttributes(attribute.Int("feeds.count", len(snapshot.RSSFeeds)))
 
 	w.Header().Set("Content-Type", "application/json")
@@ -158,9 +157,9 @@ func ConfigGetHandler(w http.ResponseWriter, r *http.Request) {
 
 // HealthzHandler is the route that exposes a healthcheck
 func HealthzHandler(w http.ResponseWriter, r *http.Request) {
-	_, span := startSpan(r.Context(), "handlers.HealthzHandler", trace.SpanKindServer)
+	_, span := tracer.StartServer(r.Context(), "handlers.HealthzHandler")
 	defer span.End()
-	log.Info("connection to /health established", zap.String("trace_id", span.SpanContext().TraceID().String()))
+	log.InfoCtx(r.Context(), "connection to /health established")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "healthy"})
 }
 
@@ -172,9 +171,9 @@ func RSSHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 	w.Header().Set("Content-Type", "application/json")
 
-	rctx, span := startSpan(ctx, "handlers.RSSHandler", trace.SpanKindServer)
+	rctx, span := tracer.StartServer(ctx, "handlers.RSSHandler")
 	defer span.End()
-	log.Info("connection to /rss established", zap.String("trace_id", span.SpanContext().TraceID().String()))
+	log.InfoCtx(rctx, "connection to /rss established")
 
 	feedMutex.RLock()
 	feeds := globalFeed
@@ -182,7 +181,7 @@ func RSSHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Use cached feeds when available; fall back to a live parse on first request.
 	if feeds == nil {
-		log.Info("got null feeds", zap.String("trace_id", span.SpanContext().TraceID().String()))
+		log.InfoCtx(rctx, "got null feeds")
 		var err error
 		feeds, err = ParseRSS(rctx, getConfigSnapshot().RSSFeeds)
 		if err != nil {
@@ -193,10 +192,10 @@ func RSSHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := toJSON(rctx, w, feeds); err != nil {
-		log.Error(err.Error())
+		log.ErrorCtx(rctx, err.Error())
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
-	recordHTTPSpan(span, r.Method, http.StatusOK)
+	instrumentation.HTTP(span, r.Method, http.StatusOK)
 }
