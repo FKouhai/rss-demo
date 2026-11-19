@@ -96,14 +96,3 @@ func GetTracer(tracerName string) trace.Tracer {
 	}
 	return otel.Tracer(tracerName)
 }
-
-type spanAttrs struct {
-	method   attribute.KeyValue
-	httpCode attribute.KeyValue
-}
-
-// SetSpanAttributes function that returns a span with the minimum attributes
-func SetSpanAttributes(span trace.Span, attributes spanAttrs) trace.Span {
-	span.SetAttributes(attributes.httpCode, attributes.method)
-	return span
-}

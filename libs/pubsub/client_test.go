@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/FKouhai/rss-demo/libs/instrumentation"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"go.opentelemetry.io/otel/trace"
@@ -76,7 +77,7 @@ func TestProcessMessage_AckPath(t *testing.T) {
 		}
 		return AckDecisionAck, nil
 	}
-	processMessage(noopTracer(), handler, msg, ConsumeOptions{})
+	processMessage(instrumentation.ForTracer(noopTracer()), handler, msg, ConsumeOptions{})
 	if !msg.acked {
 		t.Error("expected Ack after successful handler, got none")
 	}
@@ -87,7 +88,7 @@ func TestProcessMessage_NakDelayOption(t *testing.T) {
 	handler := func(ctx context.Context, m Message) (AckDecision, error) {
 		return AckDecisionNack, nil
 	}
-	processMessage(noopTracer(), handler, msg, ConsumeOptions{NakDelay: 50 * time.Millisecond})
+	processMessage(instrumentation.ForTracer(noopTracer()), handler, msg, ConsumeOptions{NakDelay: 50 * time.Millisecond})
 	if !msg.nacked {
 		t.Fatal("expected Nak after Nack decision, got none")
 	}
@@ -101,7 +102,7 @@ func TestProcessMessage_NoDelayUsesPlainNak(t *testing.T) {
 	handler := func(ctx context.Context, m Message) (AckDecision, error) {
 		return AckDecisionNack, nil
 	}
-	processMessage(noopTracer(), handler, msg, ConsumeOptions{})
+	processMessage(instrumentation.ForTracer(noopTracer()), handler, msg, ConsumeOptions{})
 	if !msg.nacked {
 		t.Fatal("expected Nak after Nack decision, got none")
 	}
