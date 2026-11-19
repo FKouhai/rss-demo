@@ -17,6 +17,8 @@ pkgs.mkShell {
     go
     pkgs.trivy
     pkgs.dive
+    # C compiler so `go test -race` works under `nix develop`.
+    pkgs.gcc
   ]
   ++ pkgs.lib.optional (devHelp != null) devHelp
   ++ enabledPackages;

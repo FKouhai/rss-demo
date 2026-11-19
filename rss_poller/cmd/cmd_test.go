@@ -7,21 +7,27 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/FKouhai/rss-demo/libs/service"
 )
 
 // newTestApp starts an in-process poller on an ephemeral port. It skips
-// locator + tracer so the test stays offline and hermetic, and points
-// CONFIG_FILE at a nonexistent path so no polling starts. Callers must
-// call app.Shutdown via t.Cleanup (wired here).
+// locator + tracer so the test stays offline and hermetic, points
+// CONFIG_FILE at a nonexistent path so no polling starts, and points NATS
+// at an unroutable port so the run stays hermetic (NATS failure is
+// tolerated, like the outbox). Callers must call app.Shutdown via t.Cleanup
+// (wired here).
 func newTestApp(t *testing.T) *App {
 	t.Helper()
 	t.Setenv("CONFIG_FILE", filepath.Join(t.TempDir(), "no-config.json"))
 	t.Setenv("LOCATOR_URL", "")
-	t.Setenv("NOTIFICATION_SENDER", "")
 	app, err := Run(context.Background(), Config{
-		HTTPAddr:    "127.0.0.1:0",
-		SkipLocator: true,
-		SkipTracer:  true,
+		BaseConfig: service.BaseConfig{
+			HTTPAddr:    "127.0.0.1:0",
+			SkipLocator: true,
+			SkipTracer:  true,
+		},
+		NATSURL: "nats://127.0.0.1:1", // unroutable
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -42,25 +48,6 @@ func waitForReady(t *testing.T, app *App) {
 	case <-app.Ready():
 	case <-time.After(2 * time.Second):
 		t.Fatal("Ready channel did not fire within 2s")
-	}
-}
-
-func TestHostFromFQDN(t *testing.T) {
-	cases := []struct {
-		input string
-		want  string
-	}{
-		{"http://notify.demo.svc.cluster.local:3000", "notify.demo.svc.cluster.local:3000"},
-		{"https://notify.demo.svc.cluster.local:3000", "notify.demo.svc.cluster.local:3000"},
-		{"notify.demo.svc.cluster.local:3000", "notify.demo.svc.cluster.local:3000"},
-		{"notify:3000", "notify:3000"},
-	}
-
-	for _, tc := range cases {
-		got := hostFromFQDN(tc.input)
-		if got != tc.want {
-			t.Errorf("hostFromFQDN(%q) = %q, want %q", tc.input, got, tc.want)
-		}
 	}
 }
 

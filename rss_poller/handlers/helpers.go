@@ -5,22 +5,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/FKouhai/rss-demo/libs/instrumentation"
 	log "github.com/FKouhai/rss-demo/libs/logger"
-	"github.com/coder/websocket"
+	"github.com/FKouhai/rss-demo/libs/pubsub"
 	"github.com/mmcdole/gofeed"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -34,127 +29,29 @@ var sharedHTTPClient = &http.Client{
 		DisableCompression:  false,
 	}),
 }
+
 var (
-	seenMu               sync.Mutex
-	seen                 = make(map[string]bool)
-	notificationReceiver string
+	seenMu sync.Mutex
+	seen   = make(map[string]bool)
 )
 
-func setNotificationReceiver(addr string) {
-	notifyMu.Lock()
-	notificationReceiver = addr
-	notifyMu.Unlock()
+var (
+	natsClient *pubsub.Client
+	natsMu     sync.RWMutex
+)
+
+// SetNATSClient installs the shared NATS connection used for publishing.
+// Called once from cmd.Run; a nil client means publish paths are skipped.
+func SetNATSClient(c *pubsub.Client) {
+	natsMu.Lock()
+	defer natsMu.Unlock()
+	natsClient = c
 }
 
-// discordNotification is the payload sent to the notify service over WebSocket.
-type discordNotification struct {
-	Content     []string `json:"feed_url"`
-	WebHookURL  string   `json:"webhook_url"`
-	Traceparent string   `json:"traceparent,omitempty"`
-	Tracestate  string   `json:"tracestate,omitempty"`
-}
-
-func (d *discordNotification) sendNotification(ctx context.Context) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	spanCtx, span := tracer.StartClient(ctx, "helper.sendNotification")
-	defer span.End()
-	span.AddEvent("SENDING_NOTIFICATION")
-	span.SetAttributes(attribute.Int("items.count", len(d.Content)))
-
-	if d.Content == nil {
-		span.SetAttributes(attribute.Int("http.status", http.StatusNoContent))
-		return nil
-	}
-
-	// Inject OTEL trace context into the payload.
-	carrier := propagation.MapCarrier{}
-	otel.GetTextMapPropagator().Inject(spanCtx, carrier)
-	d.Traceparent = carrier["traceparent"]
-	d.Tracestate = carrier["tracestate"]
-
-	log.DebugCtx(spanCtx, "[TRACE] sendNotification: trace context injection",
-		zap.String("traceparent", carrier["traceparent"]))
-
-	dn, err := json.Marshal(&d)
-	if err != nil {
-		span.RecordError(err)
-		return err
-	}
-
-	// Hold the lock across the write to prevent a race between a pointer swap and the write.
-	wsMu.Lock()
-	conn := wsConn
-	if conn == nil {
-		wsMu.Unlock()
-		log.Error("WebSocket not connected to notify, dropping notification")
-		return nil
-	}
-	wsMu.Unlock()
-
-	log.DebugCtx(spanCtx, "[TRACE] sendNotification: sending payload to notify service via WebSocket",
-		zap.Int("payload.size", len(dn)))
-	writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	err = conn.Write(writeCtx, websocket.MessageText, dn)
-	if err != nil {
-		wsMu.Lock()
-		wsConn = nil
-		wsMu.Unlock()
-		log.ErrorFmtCtx(ctx, "WebSocket write to notify failed: %v", err)
-		span.RecordError(err)
-		return err
-	}
-
-	log.DebugCtx(spanCtx, "[TRACE] sendNotification: WebSocket write successful")
-
-	return nil
-}
-
-func processFeeds(ctx context.Context, feeds *gofeed.Feed) []feedsJSON {
-	var jFeed feedsJSON
-	var jFeeds []feedsJSON
-	_, span := tracer.Start(ctx, "helper.PROCESS_FEEDS")
-	defer span.End()
-	span.AddEvent("INTERNAL::processFeeds")
-	span.SetAttributes(attribute.Int("feed.items", len(feeds.Items)))
-	for _, v := range feeds.Items {
-		jFeed.Title = v.Title
-		jFeed.Content = v.Content
-		jFeed.Description = v.Description
-		jFeed.Link = v.Link
-		jFeed.Image = v.Image
-		jFeeds = append(jFeeds, jFeed)
-	}
-	return jFeeds
-}
-
-// httpSpanError records a handler error on the span and annotates it with HTTP attributes.
-func httpSpanError(span trace.Span, method string, logMsg string, httpCode int) {
-	instrumentation.Fail(span, errors.New(logMsg), "%s", logMsg)
-	instrumentation.HTTP(span, method, httpCode)
-}
-
-func toJSON(ctx context.Context, w io.Writer, feeds []*gofeed.Feed) error {
-	var jFeeds []feedsJSON
-	lctx, span := tracer.Start(ctx, "helper.toJSON")
-	defer span.End()
-	span.AddEvent("INTERNAL::toJSON")
-
-	for _, v := range feeds {
-		pFeeds := processFeeds(lctx, v)
-		jFeeds = append(jFeeds, pFeeds...)
-	}
-
-	span.SetAttributes(attribute.Int("items.total", len(jFeeds)))
-	if err := json.NewEncoder(w).Encode(&jFeeds); err != nil {
-		httpSpanError(span, "GET", err.Error(), http.StatusBadRequest)
-		return err
-	}
-
-	return nil
+func getNATSClient() *pubsub.Client {
+	natsMu.RLock()
+	defer natsMu.RUnlock()
+	return natsClient
 }
 
 func configFilePath() string {
@@ -165,8 +62,8 @@ func configFilePath() string {
 }
 
 // LoadConfig reads feed URLs from the config file on startup.
-// If the file is absent it is a no-op; the service waits for POST /config.
-// If feeds are present, polling starts immediately.
+// If the file is absent it is a no-op; the service waits for the config
+// service. If feeds are present, polling starts immediately.
 func LoadConfig(ctx context.Context) {
 	_, span := tracer.Start(ctx, "bootstrap.LoadConfig")
 	defer span.End()
@@ -177,7 +74,7 @@ func LoadConfig(ctx context.Context) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			log.Info("no config file found, waiting for POST /config")
+			log.InfoCtx(ctx, "no config file found, polling not started")
 			return
 		}
 		instrumentation.Fail(span, err, "failed to read config file: %v", err)
@@ -190,47 +87,60 @@ func LoadConfig(ctx context.Context) {
 		instrumentation.Fail(span, err, "failed to parse config file: %v", err)
 		return
 	}
-	span.SetAttributes(attribute.Int("feeds.count", len(cfg.RSSFeeds)))
-	log.InfoFmtCtx(ctx, "loaded %d feeds from config file", len(cfg.RSSFeeds))
-	hasFeeds := len(cfg.RSSFeeds) > 0
+	snapshot := ConfigStruct{RSSFeeds: cfg.RSSFeeds, WebhookURL: cfg.WebhookURL, Feeds: cfg.Feeds}
+	log.InfoFmtCtx(ctx, "loaded %d feeds from config file", len(snapshot.RSSFeeds)+len(snapshot.Feeds))
+	hasFeeds := len(snapshot.RSSFeeds) > 0 || len(snapshot.Feeds) > 0
 	cfgMu.Unlock()
 
 	if hasFeeds {
-		if ep := os.Getenv("NOTIFICATION_ENDPOINT"); ep != "" {
-			setNotificationReceiver(ep)
-		}
 		startPolling()
 	}
 }
 
-// persistConfig writes the current cfg to the config file.
-// It is best-effort: failure is logged but does not surface to the caller
-// since ConfigMap mounts in Kubernetes are read-only by design.
-func persistConfig(ctx context.Context) {
-	_, span := tracer.Start(ctx, "bootstrap.persistConfig")
-	defer span.End()
-
-	path := configFilePath()
-	span.SetAttributes(attribute.String("config.path", path))
-
-	data, err := json.Marshal(getConfigSnapshot())
-	if err != nil {
-		span.RecordError(err)
-		return
+// feedURLs flattens the legacy URL list and the richer per-feed entries
+// into a deduplicated poll list.
+func feedURLs(cfg ConfigStruct) []string {
+	seenURLs := make(map[string]bool)
+	var out []string
+	for _, u := range cfg.RSSFeeds {
+		if u != "" && !seenURLs[u] {
+			seenURLs[u] = true
+			out = append(out, u)
+		}
 	}
-
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		span.RecordError(err)
-		log.InfoFmtCtx(ctx, "config file not writable (expected in Kubernetes): %v", err)
-		return
+	for _, f := range cfg.Feeds {
+		if f.URL != "" && !seenURLs[f.URL] {
+			seenURLs[f.URL] = true
+			out = append(out, f.URL)
+		}
 	}
-
-	span.AddEvent("config persisted")
-	log.InfoFmtCtx(ctx, "persisted config to %s", path)
+	return out
 }
 
-// ParseRSS returns the rss feed with all its items
-func ParseRSS(ctx context.Context, feedURL []string) ([]*gofeed.Feed, error) {
+// resolveWebhook picks the webhook URL for a feed: per-feed override first,
+// then the global default, then the DEFAULT_WEBHOOK_URL environment fallback.
+func resolveWebhook(feedURL string, cfg ConfigStruct) string {
+	for _, f := range cfg.Feeds {
+		if f.URL == feedURL && f.WebhookURL != "" {
+			return f.WebhookURL
+		}
+	}
+	if cfg.WebhookURL != "" {
+		return cfg.WebhookURL
+	}
+	return os.Getenv("DEFAULT_WEBHOOK_URL")
+}
+
+// parsedFeed pairs a fetched feed with the URL it was polled from, so
+// downstream stages never lose the feed↔item association.
+type parsedFeed struct {
+	URL  string
+	Feed *gofeed.Feed
+}
+
+// ParseRSS returns the rss feed with all its items, each paired with its
+// source URL. Feeds that fail to parse are skipped.
+func ParseRSS(ctx context.Context, feedURL []string) ([]parsedFeed, error) {
 	_, span := tracer.StartClient(ctx, "helper.ParseRSS")
 	defer span.End()
 	span.AddEvent("PARSING_FEED")
@@ -242,8 +152,8 @@ func ParseRSS(ctx context.Context, feedURL []string) ([]*gofeed.Feed, error) {
 
 	for i, v := range feedURL {
 		eg.Go(func() error {
-			feedCtx, feedCancel := context.WithTimeout(egCtx, 8*time.Second)
-			defer feedCancel()
+			feedCtx, cancel := context.WithTimeout(egCtx, 8*time.Second)
+			defer cancel()
 			_, feedSpan := tracer.Start(feedCtx, "helper.ParseSingleFeed")
 			feedSpan.SetAttributes(attribute.String("feed.url", v))
 			defer feedSpan.End()
@@ -263,10 +173,10 @@ func ParseRSS(ctx context.Context, feedURL []string) ([]*gofeed.Feed, error) {
 
 	_ = eg.Wait() // individual feed errors are already handled per-goroutine above
 
-	var parsed []*gofeed.Feed
-	for _, f := range feeds {
+	var parsed []parsedFeed
+	for i, f := range feeds {
 		if f != nil {
-			parsed = append(parsed, f)
+			parsed = append(parsed, parsedFeed{URL: feedURL[i], Feed: f})
 		}
 	}
 	if len(parsed) == 0 && len(feedURL) > 0 {
@@ -279,27 +189,6 @@ func ParseRSS(ctx context.Context, feedURL []string) ([]*gofeed.Feed, error) {
 	return parsed, nil
 }
 
-// handleConfigPayload validates the HTTP request and unmarshals the JSON payload.
-func handleConfigPayload(r *http.Request) error {
-	if r.Method != http.MethodPost {
-		return errors.New("the wrong method was used")
-	}
-	if r.Header.Get("Content-Type") != "application/json" {
-		return errors.New("the request does not contain a JSON payload")
-	}
-	body, err := io.ReadAll(r.Body)
-	// nolint:errcheck
-	defer r.Body.Close()
-	if err != nil {
-		return err
-	}
-	log.InfoCtx(r.Context(), string(body))
-
-	cfgMu.Lock()
-	defer cfgMu.Unlock()
-	return json.NewDecoder(strings.NewReader(string(body))).Decode(&cfg)
-}
-
 func itemKey(it *gofeed.Item) string {
 	if it.GUID != "" {
 		return it.GUID
@@ -307,35 +196,60 @@ func itemKey(it *gofeed.Item) string {
 	return it.Link
 }
 
-// collectNewLinks scans feeds and returns URLs not yet present in the seen map,
-// recording each newly encountered key into seen. Items with empty links are skipped.
-// The GUID (or Link when no GUID) is used as the dedup key; only the Link is
-// appended to the returned slice so callers always receive real URLs.
+// feedItem is a deduplicated entry ready to publish, carrying the feed it
+// came from so publishers never lose the feed↔item association.
+type feedItem struct {
+	FeedURL     string
+	Title       string
+	Link        string
+	PublishedAt string
+}
+
+func publishedAt(it *gofeed.Item) string {
+	if it.PublishedParsed != nil {
+		return it.PublishedParsed.UTC().Format(time.RFC3339)
+	}
+	return it.Published
+}
+
+// collectNewItems scans feeds and returns entries not yet present in the seen
+// map, recording each newly encountered key into seen. Items with empty links
+// are skipped. The GUID (or Link when no GUID) is used as the dedup key.
 // A child span is created so the dedup step is visible inside the PollAndNotify trace.
-func collectNewLinks(ctx context.Context, feeds []*gofeed.Feed) []string {
-	_, span := tracer.Start(ctx, "helper.collectNewLinks")
+func collectNewItems(ctx context.Context, feeds []parsedFeed) []feedItem {
+	_, span := tracer.Start(ctx, "helper.collectNewItems")
 	defer span.End()
 
-	var toSend []string
+	var items []feedItem
 	seenMu.Lock()
 	defer seenMu.Unlock()
-	for _, feed := range feeds {
-		for _, it := range feed.Items {
+	for _, pf := range feeds {
+		if pf.Feed == nil {
+			continue
+		}
+		for _, it := range pf.Feed.Items {
 			k := itemKey(it)
 			if k == "" || seen[k] {
 				continue
 			}
 			seen[k] = true
-			if it.Link != "" {
-				toSend = append(toSend, it.Link)
+			if it.Link == "" {
+				continue
 			}
+			items = append(items, feedItem{
+				FeedURL:     pf.URL,
+				Title:       it.Title,
+				Link:        it.Link,
+				PublishedAt: publishedAt(it),
+			})
 		}
 	}
-	span.SetAttributes(attribute.Int("new.items", len(toSend)))
-	return toSend
+	span.SetAttributes(attribute.Int("new.items", len(items)))
+	return items
 }
 
-// pollAndNotify contains the core logic for a single polling cycle.
+// pollAndNotify contains the core logic for a single polling cycle: parse,
+// dedupe, and publish each new item to feeds.new.
 func pollAndNotify(t time.Time) {
 	log.InfoFmt("Poller ticker: tick at %v", t)
 
@@ -344,48 +258,44 @@ func pollAndNotify(t time.Time) {
 	// lifecycle is deterministic and never leaks.
 	defer cycleSpan.End()
 
-	feeds, err := ParseRSS(cycleCtx, getConfigSnapshot().RSSFeeds)
+	nc := getNATSClient()
+	if nc == nil {
+		cycleSpan.AddEvent("nats unavailable, skipping cycle")
+		log.ErrorCtx(cycleCtx, "NATS not connected, skipping poll cycle")
+		return
+	}
+
+	snapshot := getConfigSnapshot()
+	feeds, err := ParseRSS(cycleCtx, feedURLs(snapshot))
 	if err != nil {
 		cycleSpan.RecordError(err)
 		return
 	}
 
-	// Deduplicate: collectNewLinks is a child span of PollAndNotify.
-	toSend := collectNewLinks(cycleCtx, feeds)
-	cycleSpan.SetAttributes(attribute.Int("new.items", len(toSend)))
+	// Deduplicate: collectNewItems is a child span of PollAndNotify.
+	items := collectNewItems(cycleCtx, feeds)
+	cycleSpan.SetAttributes(attribute.Int("new.items", len(items)))
 
-	// Safely update the globalFeed with the latest data.
-	feedMutex.Lock()
-	globalFeed = feeds
-	feedMutex.Unlock()
-
-	if len(toSend) == 0 {
-		return
-	}
-	notifyMu.RLock()
-	receiver := notificationReceiver
-	notifyMu.RUnlock()
-	if receiver == "" {
-		log.ErrorCtx(cycleCtx, "NOTIFICATION_ENDPOINT not set, skipping notification.")
-		return
-	}
-
-	// Send the notification asynchronously so it does not delay updating
-	// globalFeed.  The detached context carries cycleSpan so the goroutine's
-	// child span (helper.sendNotification) appears nested in the same trace,
-	// even after pollAndNotify has returned and cycleSpan has been exported.
-	// OTel parent-child linkage is recorded at child-start time (span IDs are
-	// copied), so ending the parent first does not break the trace hierarchy.
-	notifCtx := trace.ContextWithSpan(context.Background(), cycleSpan)
-	notify := discordNotification{
-		Content:    toSend,
-		WebHookURL: receiver,
-	}
-	go func() {
-		if err := notify.sendNotification(notifCtx); err != nil {
-			log.ErrorFmtCtx(notifCtx, "Failed to send notification: %v", err)
+	for _, it := range items {
+		dm := pubsub.RSSItem{
+			FeedURL:     it.FeedURL,
+			Title:       it.Title,
+			Link:        it.Link,
+			PublishedAt: it.PublishedAt,
+			WebhookURL:  resolveWebhook(it.FeedURL, snapshot),
 		}
-	}()
+		payload, err := json.Marshal(dm)
+		if err != nil {
+			cycleSpan.RecordError(err)
+			log.ErrorFmtCtx(cycleCtx, "failed to marshal item %s: %v", it.Link, err)
+			continue
+		}
+		if _, err := nc.Publish(cycleCtx, pubsub.SubjectFeedsNew, payload, dm.MsgID()); err != nil {
+			cycleSpan.RecordError(err)
+			log.ErrorFmtCtx(cycleCtx, "failed to publish item %s: %v", it.Link, err)
+			continue
+		}
+	}
 }
 
 // startPolling initializes and runs the background poller goroutine.
