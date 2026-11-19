@@ -1,0 +1,4 @@
+/gomod2nix-template
+result
+.direnv/
+.env

@@ -9,7 +9,7 @@ import (
 
 func TestFeedsStreamConfig_Baseline(t *testing.T) {
 	cfg := FeedsStreamConfig()
-	if cfg.Name != StreamFeeds {
+	if cfg.Name != string(StreamFeeds) {
 		t.Errorf("Name = %q, want %q", cfg.Name, StreamFeeds)
 	}
 	wantSubjects := map[string]bool{SubjectFeedsNew: true, SubjectFeedsEnriched: true}
