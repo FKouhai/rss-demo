@@ -3,7 +3,6 @@ module github.com/FKouhai/rss-poller
 go 1.26.0
 
 require (
-	github.com/coder/websocket v1.8.14
 	github.com/mmcdole/gofeed v1.3.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.68.0
 	go.opentelemetry.io/otel v1.43.0
