@@ -1,6 +1,6 @@
 module github.com/FKouhai/rss-outbox
 
-go 1.26.0
+go 1.27.4
 
 require (
 	github.com/FKouhai/rss-demo v0.0.0-20260419134835-72a1a088613d

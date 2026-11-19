@@ -3,7 +3,7 @@
 schema = 4
 
 [workspace]
-  go = "1.26.0"
+  go = "1.27.4"
   modules = [".", "./rss_notify", "./rss_outbox", "./rss_poller"]
 
 [mod]
@@ -15,7 +15,7 @@ schema = 4
   [mod."github.com/FKouhai/rss-demo"]
     version = "v0.0.0-20260419134835-72a1a088613d"
     hash = "sha256-37I8w1xWjzqj0DEOE/Yb14z5S45DC4BiTKwrBR1CMKA="
-    go = "1.26.0"
+    go = "1.27.4"
     local = "."
   [mod."github.com/PuerkitoBio/goquery"]
     version = "v1.12.0"
@@ -199,7 +199,7 @@ schema = 4
     version = "v1.27.1"
     hash = "sha256-bn/MMu7X3GkUuW12Xwn9JYbOJeEu9+yoQtkmO+36xlQ="
     go = "1.19"
-    packages = ["go.uber.org/zap", "go.uber.org/zap/buffer", "go.uber.org/zap/internal", "go.uber.org/zap/internal/bufferpool", "go.uber.org/zap/internal/color", "go.uber.org/zap/internal/exit", "go.uber.org/zap/internal/pool", "go.uber.org/zap/internal/stacktrace", "go.uber.org/zap/zapcore"]
+    packages = ["go.uber.org/zap", "go.uber.org/zap/buffer", "go.uber.org/zap/internal", "go.uber.org/zap/internal/bufferpool", "go.uber.org/zap/internal/color", "go.uber.org/zap/internal/exit", "go.uber.org/zap/internal/pool", "go.uber.org/zap/internal/stacktrace", "go.uber.org/zap/zapcore", "go.uber.org/zap/zaptest/observer"]
   [mod."golang.org/x/crypto"]
     version = "v0.53.0"
     hash = "sha256-TWcccM4d5t0ZbDyHXEm4elxKk5uzlo29i85lVHSZcNw="
