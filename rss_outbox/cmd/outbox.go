@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	db "github.com/FKouhai/rss-demo/libs/db"
 	"github.com/FKouhai/rss-demo/libs/instrumentation"
 	"github.com/FKouhai/rss-demo/libs/pubsub"
 	"github.com/FKouhai/rss-outbox/store"
@@ -123,7 +124,7 @@ func (o *Outbox) handleFeed(ctx context.Context, msg pubsub.Message) (pubsub.Ack
 		CreatedAt:  time.Now().UTC(),
 	}
 	if _, err := o.store.Save(ctx, entry); err != nil {
-		if store.IsDuplicateKey(err) {
+		if db.IsDuplicateKey(err) {
 			return pubsub.AckDecisionAck, nil
 		}
 		return pubsub.AckDecisionNack, err

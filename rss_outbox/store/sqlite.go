@@ -2,7 +2,11 @@ package store
 
 import _ "embed"
 
-import _ "modernc.org/sqlite"
+import (
+	_ "modernc.org/sqlite"
+
+	db "github.com/FKouhai/rss-demo/libs/db"
+)
 
 //go:embed sqlite/schema.sql
 var sqliteSchema string
@@ -11,9 +15,9 @@ var sqliteSchema string
 // ":memory:" or a temp file path it serves as the fast backend for
 // integration tests; production points it at a persistent path.
 func newSQLiteStore(dsn string) (Store, error) {
-	return newOutboxStore(dialect{
-		driver:      "sqlite",
-		schema:      sqliteSchema,
-		placeholder: qmark,
-	}, dsn)
+	conn, err := db.Open(db.DriverSQLite, dsn, sqliteSchema)
+	if err != nil {
+		return nil, err
+	}
+	return &outboxStore{db: conn, driver: db.DriverSQLite}, nil
 }
