@@ -4,17 +4,20 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strconv"
-	"strings"
 	"time"
+
+	db "github.com/FKouhai/rss-demo/libs/db"
 )
 
-type Driver string
+// Driver is the SQL backend. Aliased to the shared libs/db definition so
+// every service names the same drivers; the consts below preserve the
+// service-local spelling.
+type Driver = db.Driver
 
 const (
-	DriverSQLite   Driver = "sqlite"
-	DriverMySQL    Driver = "mysql"
-	DriverPostgres Driver = "postgres"
+	DriverSQLite   = db.DriverSQLite
+	DriverMySQL    = db.DriverMySQL
+	DriverPostgres = db.DriverPostgres
 )
 
 type Config struct {
@@ -54,50 +57,16 @@ type Store interface {
 	Close() error
 }
 
-// dialect captures the only things that differ across engines: the
-// database/sql driver name, the schema DDL, and the placeholder style.
-type dialect struct {
-	driver      string
-	schema      string
-	placeholder func(int) string
-}
-
-func (d dialect) placeholders(n, total int) string {
-	parts := make([]string, total)
-	for i := range total {
-		parts[i] = d.placeholder(n + i)
-	}
-	var out strings.Builder
-	out.WriteString(parts[0])
-	for _, p := range parts[1:] {
-		out.WriteString(", ")
-		out.WriteString(p)
-	}
-	return out.String()
-}
-
 // outboxStore is the single implementation of Store. It is identical for
-// every engine; only the injected dialect varies.
+// every engine; only the injected driver varies (placeholder style).
 type outboxStore struct {
-	db      *sql.DB
-	dialect dialect
-}
-
-func newOutboxStore(d dialect, dsn string) (*outboxStore, error) {
-	db, err := sql.Open(d.driver, dsn)
-	if err != nil {
-		return nil, fmt.Errorf("%s open: %w", d.driver, err)
-	}
-	if _, err := db.Exec(d.schema); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("%s migrate: %w", d.driver, err)
-	}
-	return &outboxStore{db: db, dialect: d}, nil
+	db     *sql.DB
+	driver db.Driver
 }
 
 func (s *outboxStore) Save(ctx context.Context, e Entry) (string, error) {
 	const q = `INSERT INTO outbox (id, feed_url, title, link, webhook_url, status, error, created_at, delivered_at) VALUES (`
-	qs := q + s.dialect.placeholders(1, 9) + `)`
+	qs := q + db.Placeholders(s.driver, 1, 9) + `)`
 	_, err := s.db.ExecContext(ctx, qs,
 		e.ID, e.FeedURL, e.Title, e.Link, e.WebhookURL, e.Status, e.Error, e.CreatedAt, e.DeliveredAt,
 	)
@@ -132,13 +101,13 @@ func (s *outboxStore) GetPending(ctx context.Context) ([]Entry, error) {
 }
 
 func (s *outboxStore) MarkDelivered(ctx context.Context, id string) error {
-	q := `UPDATE outbox SET status = 'delivered', delivered_at = CURRENT_TIMESTAMP, error = NULL WHERE id = ` + s.dialect.placeholder(1)
+	q := `UPDATE outbox SET status = 'delivered', delivered_at = CURRENT_TIMESTAMP, error = NULL WHERE id = ` + db.Placeholder(s.driver, 1)
 	_, err := s.db.ExecContext(ctx, q, id)
 	return err
 }
 
 func (s *outboxStore) MarkFailed(ctx context.Context, id string, errMsg string) error {
-	q := `UPDATE outbox SET status = 'failed', error = ` + s.dialect.placeholder(1) + ` WHERE id = ` + s.dialect.placeholder(2)
+	q := `UPDATE outbox SET status = 'failed', error = ` + db.Placeholder(s.driver, 1) + ` WHERE id = ` + db.Placeholder(s.driver, 2)
 	_, err := s.db.ExecContext(ctx, q, errMsg, id)
 	return err
 }
@@ -188,9 +157,3 @@ func NewConfig(cfg Config) (Store, error) {
 		return nil, fmt.Errorf("unsupported driver: %s", cfg.Driver)
 	}
 }
-
-// qmark renders a positional placeholder for SQLite and MySQL.
-func qmark(int) string { return "?" }
-
-// dollar renders a numbered placeholder for PostgreSQL.
-func dollar(n int) string { return "$" + strconv.Itoa(n) }

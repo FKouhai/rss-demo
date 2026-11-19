@@ -248,40 +248,6 @@ func TestStore_Save_PreservesProvidedDeliveredAt(t *testing.T) {
 	}
 }
 
-// --- dialect unit tests (no database needed) ---
-
-func TestQmark(t *testing.T) {
-	for _, n := range []int{1, 2, 42} {
-		if got := qmark(n); got != "?" {
-			t.Errorf("qmark(%d) = %q, want %q", n, got, "?")
-		}
-	}
-}
-
-func TestDollar(t *testing.T) {
-	cases := map[int]string{1: "$1", 3: "$3", 12: "$12"}
-	for n, want := range cases {
-		if got := dollar(n); got != want {
-			t.Errorf("dollar(%d) = %q, want %q", n, got, want)
-		}
-	}
-}
-
-func TestDialect_Placeholders(t *testing.T) {
-	dq := dialect{placeholder: qmark}
-	if got := dq.placeholders(1, 9); got != "?, ?, ?, ?, ?, ?, ?, ?, ?" {
-		t.Errorf("qmark placeholders(1,9) = %q", got)
-	}
-	dp := dialect{placeholder: dollar}
-	if got := dp.placeholders(1, 3); got != "$1, $2, $3" {
-		t.Errorf("dollar placeholders(1,3) = %q", got)
-	}
-	// Offset start index: pg composes $5, $6, $7 (e.g. after an id placeholder).
-	if got := dp.placeholders(5, 3); got != "$5, $6, $7" {
-		t.Errorf("dollar placeholders(5,3) = %q", got)
-	}
-}
-
 func assertEntryEqual(t *testing.T, got, want Entry) {
 	t.Helper()
 	if got.ID != want.ID {
