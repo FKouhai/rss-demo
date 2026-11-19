@@ -21,7 +21,9 @@ func getConfigSnapshot() ConfigStruct {
 	defer cfgMu.RUnlock()
 	feeds := make([]string, len(cfg.RSSFeeds))
 	copy(feeds, cfg.RSSFeeds)
-	return ConfigStruct{RSSFeeds: feeds}
+	sources := make([]FeedSource, len(cfg.Feeds))
+	copy(sources, cfg.Feeds)
+	return ConfigStruct{RSSFeeds: feeds, WebhookURL: cfg.WebhookURL, Feeds: sources}
 }
 
 // writeJSON writes status and JSON-encodes body to w, logging any encoding error.
