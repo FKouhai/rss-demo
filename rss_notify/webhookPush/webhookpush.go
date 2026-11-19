@@ -14,7 +14,6 @@ import (
 	log "github.com/FKouhai/rss-demo/libs/logger"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
 
@@ -32,6 +31,9 @@ type DiscordNotification struct {
 	WebHookURL string   `json:"webhook_url"`
 }
 
+// tracer is the service-scoped helper for notify spans.
+var tracer = instrumentation.ForService("notify")
+
 // DiscordMessage is the final message that will get sent to the destination
 type DiscordMessage struct {
 	Content string `json:"content"`
@@ -39,16 +41,16 @@ type DiscordMessage struct {
 
 // GetContent is the helper function that receives a feed as an input and returns the Data structure
 func (d *DiscordNotification) GetContent(ctx context.Context, content []byte) ([]string, error) {
-	_, span := instrumentation.GetTracer("notify").Start(ctx, "webhookPush.GetContent", trace.WithSpanKind(trace.SpanKindInternal))
+	_, span := tracer.Start(ctx, "webhookPush.GetContent")
 	defer span.End()
 	span.AddEvent("UNMARSHALING_JSON")
 	span.SetAttributes(attribute.Int("payload.size", len(content)))
 	err := json.Unmarshal(content, &d)
 	if err != nil {
 		span.RecordError(err)
-		log.Info("got error unmarshaling JSON", zap.String("trace_id", span.SpanContext().TraceID().String()))
-		log.ErrorFmt("JSON unmarshal error: %v", err.Error())
-		log.ErrorFmt("Received payload: %s", string(content))
+		log.InfoCtx(ctx, "got error unmarshaling JSON")
+		log.ErrorFmtCtx(ctx, "JSON unmarshal error: %v", err.Error())
+		log.ErrorFmtCtx(ctx, "Received payload: %s", string(content))
 		return nil, err
 	}
 	span.SetAttributes(attribute.Int("messages.count", len(d.Content)))
@@ -57,14 +59,12 @@ func (d *DiscordNotification) GetContent(ctx context.Context, content []byte) ([
 
 // SendNotification method compliant with the PushMessage interface that sends a post request to the discord webhook endpoint
 func (d *DiscordNotification) SendNotification(ctx context.Context, message []string) (int, error) {
-	_, span := instrumentation.GetTracer("notify").Start(ctx, "webhookPush.SendNotification", trace.WithSpanKind(trace.SpanKindInternal))
+	_, span := tracer.Start(ctx, "webhookPush.SendNotification")
 	defer span.End()
 	span.AddEvent("SENDING_WEBHOOK")
 	span.SetAttributes(attribute.Int("messages.count", len(message)))
 
-	incomingTraceID := trace.SpanContextFromContext(ctx).TraceID()
-	log.Debug("[TRACE] SendNotification: incoming trace context",
-		zap.String("trace_id", incomingTraceID.String()),
+	log.DebugCtx(ctx, "[TRACE] SendNotification: incoming trace context",
 		zap.String("webhook_url", d.WebHookURL))
 
 	m, err := d.toDiscordMessage(ctx, message)
@@ -76,12 +76,12 @@ func (d *DiscordNotification) SendNotification(ctx context.Context, message []st
 	req, err := http.NewRequestWithContext(ctx, "POST", d.WebHookURL, r)
 	if err != nil {
 		span.RecordError(err)
-		log.Info("Failed to make request")
+		log.InfoCtx(ctx, "Failed to make request")
 		return 0, err
 	}
 	req.Header.Add("Content-Type", "application/json")
 
-	log.Debug("[TRACE] SendNotification: request traceparent header",
+	log.DebugCtx(ctx, "[TRACE] SendNotification: request traceparent header",
 		zap.String("traceparent", req.Header.Get("traceparent")))
 
 	client := &http.Client{
@@ -91,7 +91,7 @@ func (d *DiscordNotification) SendNotification(ctx context.Context, message []st
 	res, err := client.Do(req)
 	if err != nil {
 		span.RecordError(err)
-		log.Info("Request was unsuccesful")
+		log.InfoCtx(ctx, "Request was unsuccesful")
 		return http.StatusInternalServerError, err
 	}
 	// nolint
@@ -103,15 +103,14 @@ func (d *DiscordNotification) SendNotification(ctx context.Context, message []st
 	}
 	span.SetAttributes(attribute.Int("webhook.status", res.StatusCode), attribute.Int("response.size", len(body)))
 
-	log.Debug("[TRACE] SendNotification: webhook response",
-		zap.Int("status_code", res.StatusCode),
-		zap.String("trace_id", span.SpanContext().TraceID().String()))
-	log.InfoFmt("webhook response: %v", string(body)) // TODO: add trace_id
+	log.DebugCtx(ctx, "[TRACE] SendNotification: webhook response",
+		zap.Int("status_code", res.StatusCode))
+	log.InfoFmtCtx(ctx, "webhook response: %v", string(body))
 	return res.StatusCode, nil
 }
 
 func (d *DiscordNotification) toDiscordMessage(ctx context.Context, message []string) ([]byte, error) {
-	_, span := instrumentation.GetTracer("notify").Start(ctx, "webhookPush.toDiscordMessage", trace.WithSpanKind(trace.SpanKindInternal))
+	_, span := tracer.Start(ctx, "webhookPush.toDiscordMessage")
 	defer span.End()
 	span.AddEvent("MARSHALING_MESSAGE")
 	if len(message) == 0 {

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/FKouhai/rss-demo/libs/instrumentation"
 	log "github.com/FKouhai/rss-demo/libs/logger"
 	"github.com/coder/websocket"
 	"github.com/mmcdole/gofeed"
@@ -58,7 +59,7 @@ func (d *discordNotification) sendNotification(ctx context.Context) error {
 		ctx = context.Background()
 	}
 
-	spanCtx, span := startSpan(ctx, "helper.sendNotification", trace.SpanKindClient)
+	spanCtx, span := tracer.StartClient(ctx, "helper.sendNotification")
 	defer span.End()
 	span.AddEvent("SENDING_NOTIFICATION")
 	span.SetAttributes(attribute.Int("items.count", len(d.Content)))
@@ -74,8 +75,7 @@ func (d *discordNotification) sendNotification(ctx context.Context) error {
 	d.Traceparent = carrier["traceparent"]
 	d.Tracestate = carrier["tracestate"]
 
-	log.Debug("[TRACE] sendNotification: trace context injection",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+	log.DebugCtx(spanCtx, "[TRACE] sendNotification: trace context injection",
 		zap.String("traceparent", carrier["traceparent"]))
 
 	dn, err := json.Marshal(&d)
@@ -94,8 +94,7 @@ func (d *discordNotification) sendNotification(ctx context.Context) error {
 	}
 	wsMu.Unlock()
 
-	log.Debug("[TRACE] sendNotification: sending payload to notify service via WebSocket",
-		zap.String("trace_id", span.SpanContext().TraceID().String()),
+	log.DebugCtx(spanCtx, "[TRACE] sendNotification: sending payload to notify service via WebSocket",
 		zap.Int("payload.size", len(dn)))
 	writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -104,13 +103,12 @@ func (d *discordNotification) sendNotification(ctx context.Context) error {
 		wsMu.Lock()
 		wsConn = nil
 		wsMu.Unlock()
-		log.ErrorFmt("WebSocket write to notify failed: %v", err)
+		log.ErrorFmtCtx(ctx, "WebSocket write to notify failed: %v", err)
 		span.RecordError(err)
 		return err
 	}
 
-	log.Debug("[TRACE] sendNotification: WebSocket write successful",
-		zap.String("trace_id", span.SpanContext().TraceID().String()))
+	log.DebugCtx(spanCtx, "[TRACE] sendNotification: WebSocket write successful")
 
 	return nil
 }
@@ -118,7 +116,7 @@ func (d *discordNotification) sendNotification(ctx context.Context) error {
 func processFeeds(ctx context.Context, feeds *gofeed.Feed) []feedsJSON {
 	var jFeed feedsJSON
 	var jFeeds []feedsJSON
-	_, span := startSpan(ctx, "helper.PROCESS_FEEDS", trace.SpanKindInternal)
+	_, span := tracer.Start(ctx, "helper.PROCESS_FEEDS")
 	defer span.End()
 	span.AddEvent("INTERNAL::processFeeds")
 	span.SetAttributes(attribute.Int("feed.items", len(feeds.Items)))
@@ -135,13 +133,13 @@ func processFeeds(ctx context.Context, feeds *gofeed.Feed) []feedsJSON {
 
 // httpSpanError records a handler error on the span and annotates it with HTTP attributes.
 func httpSpanError(span trace.Span, method string, logMsg string, httpCode int) {
-	spanErrorf(span, errors.New(logMsg), "%s", logMsg)
-	recordHTTPSpan(span, method, httpCode)
+	instrumentation.Fail(span, errors.New(logMsg), "%s", logMsg)
+	instrumentation.HTTP(span, method, httpCode)
 }
 
 func toJSON(ctx context.Context, w io.Writer, feeds []*gofeed.Feed) error {
 	var jFeeds []feedsJSON
-	lctx, span := startSpan(ctx, "helper.toJSON", trace.SpanKindInternal)
+	lctx, span := tracer.Start(ctx, "helper.toJSON")
 	defer span.End()
 	span.AddEvent("INTERNAL::toJSON")
 
@@ -151,7 +149,6 @@ func toJSON(ctx context.Context, w io.Writer, feeds []*gofeed.Feed) error {
 	}
 
 	span.SetAttributes(attribute.Int("items.total", len(jFeeds)))
-
 	if err := json.NewEncoder(w).Encode(&jFeeds); err != nil {
 		httpSpanError(span, "GET", err.Error(), http.StatusBadRequest)
 		return err
@@ -171,7 +168,7 @@ func configFilePath() string {
 // If the file is absent it is a no-op; the service waits for POST /config.
 // If feeds are present, polling starts immediately.
 func LoadConfig(ctx context.Context) {
-	_, span := startSpan(ctx, "bootstrap.LoadConfig", trace.SpanKindInternal)
+	_, span := tracer.Start(ctx, "bootstrap.LoadConfig")
 	defer span.End()
 
 	path := configFilePath()
@@ -183,18 +180,18 @@ func LoadConfig(ctx context.Context) {
 			log.Info("no config file found, waiting for POST /config")
 			return
 		}
-		spanErrorf(span, err, "failed to read config file: %v", err)
+		instrumentation.Fail(span, err, "failed to read config file: %v", err)
 		return
 	}
 
 	cfgMu.Lock()
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		cfgMu.Unlock()
-		spanErrorf(span, err, "failed to parse config file: %v", err)
+		instrumentation.Fail(span, err, "failed to parse config file: %v", err)
 		return
 	}
 	span.SetAttributes(attribute.Int("feeds.count", len(cfg.RSSFeeds)))
-	log.InfoFmt("loaded %d feeds from config file", len(cfg.RSSFeeds))
+	log.InfoFmtCtx(ctx, "loaded %d feeds from config file", len(cfg.RSSFeeds))
 	hasFeeds := len(cfg.RSSFeeds) > 0
 	cfgMu.Unlock()
 
@@ -210,7 +207,7 @@ func LoadConfig(ctx context.Context) {
 // It is best-effort: failure is logged but does not surface to the caller
 // since ConfigMap mounts in Kubernetes are read-only by design.
 func persistConfig(ctx context.Context) {
-	_, span := startSpan(ctx, "bootstrap.persistConfig", trace.SpanKindInternal)
+	_, span := tracer.Start(ctx, "bootstrap.persistConfig")
 	defer span.End()
 
 	path := configFilePath()
@@ -224,17 +221,17 @@ func persistConfig(ctx context.Context) {
 
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		span.RecordError(err)
-		log.InfoFmt("config file not writable (expected in Kubernetes): %v", err)
+		log.InfoFmtCtx(ctx, "config file not writable (expected in Kubernetes): %v", err)
 		return
 	}
 
 	span.AddEvent("config persisted")
-	log.InfoFmt("persisted config to %s", path)
+	log.InfoFmtCtx(ctx, "persisted config to %s", path)
 }
 
 // ParseRSS returns the rss feed with all its items
 func ParseRSS(ctx context.Context, feedURL []string) ([]*gofeed.Feed, error) {
-	_, span := startSpan(ctx, "helper.ParseRSS", trace.SpanKindClient)
+	_, span := tracer.StartClient(ctx, "helper.ParseRSS")
 	defer span.End()
 	span.AddEvent("PARSING_FEED")
 	span.SetAttributes(attribute.Int("feeds.expected", len(feedURL)))
@@ -247,7 +244,7 @@ func ParseRSS(ctx context.Context, feedURL []string) ([]*gofeed.Feed, error) {
 		eg.Go(func() error {
 			feedCtx, feedCancel := context.WithTimeout(egCtx, 8*time.Second)
 			defer feedCancel()
-			_, feedSpan := startSpan(feedCtx, "helper.ParseSingleFeed", trace.SpanKindInternal)
+			_, feedSpan := tracer.Start(feedCtx, "helper.ParseSingleFeed")
 			feedSpan.SetAttributes(attribute.String("feed.url", v))
 			defer feedSpan.End()
 			feedParser := gofeed.NewParser()
@@ -256,7 +253,7 @@ func ParseRSS(ctx context.Context, feedURL []string) ([]*gofeed.Feed, error) {
 			if err != nil {
 				span.AddEvent("FAILED_PROCESS_FEED")
 				feedSpan.RecordError(err)
-				log.Debug("feed failed, skipping", zap.String("url", v), zap.Error(err))
+				log.DebugCtx(feedCtx, "feed failed, skipping", zap.String("url", v), zap.Error(err))
 				return nil
 			}
 			feeds[i] = feed
@@ -278,7 +275,7 @@ func ParseRSS(ctx context.Context, feedURL []string) ([]*gofeed.Feed, error) {
 
 	span.SetAttributes(attribute.Int("feeds.parsed", len(parsed)))
 	span.AddEvent("got feed")
-	log.Info("got feed", zap.String("trace_id", span.SpanContext().TraceID().String()))
+	log.InfoCtx(ctx, "got feed")
 	return parsed, nil
 }
 
@@ -296,7 +293,7 @@ func handleConfigPayload(r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	log.Info(string(body))
+	log.InfoCtx(r.Context(), string(body))
 
 	cfgMu.Lock()
 	defer cfgMu.Unlock()
@@ -316,7 +313,7 @@ func itemKey(it *gofeed.Item) string {
 // appended to the returned slice so callers always receive real URLs.
 // A child span is created so the dedup step is visible inside the PollAndNotify trace.
 func collectNewLinks(ctx context.Context, feeds []*gofeed.Feed) []string {
-	_, span := startSpan(ctx, "helper.collectNewLinks", trace.SpanKindInternal)
+	_, span := tracer.Start(ctx, "helper.collectNewLinks")
 	defer span.End()
 
 	var toSend []string
@@ -342,7 +339,7 @@ func collectNewLinks(ctx context.Context, feeds []*gofeed.Feed) []string {
 func pollAndNotify(t time.Time) {
 	log.InfoFmt("Poller ticker: tick at %v", t)
 
-	cycleCtx, cycleSpan := startSpan(context.Background(), "poller.PollAndNotify", trace.SpanKindInternal)
+	cycleCtx, cycleSpan := tracer.Start(context.Background(), "poller.PollAndNotify")
 	// Always end the cycle span when this function returns so the span
 	// lifecycle is deterministic and never leaks.
 	defer cycleSpan.End()
@@ -369,7 +366,7 @@ func pollAndNotify(t time.Time) {
 	receiver := notificationReceiver
 	notifyMu.RUnlock()
 	if receiver == "" {
-		log.Error("NOTIFICATION_ENDPOINT not set, skipping notification.")
+		log.ErrorCtx(cycleCtx, "NOTIFICATION_ENDPOINT not set, skipping notification.")
 		return
 	}
 
@@ -386,7 +383,7 @@ func pollAndNotify(t time.Time) {
 	}
 	go func() {
 		if err := notify.sendNotification(notifCtx); err != nil {
-			log.ErrorFmt("Failed to send notification: %v", err)
+			log.ErrorFmtCtx(notifCtx, "Failed to send notification: %v", err)
 		}
 	}()
 }
