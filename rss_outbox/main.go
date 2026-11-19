@@ -8,7 +8,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/FKouhai/rss-demo/libs/service"
 	"github.com/FKouhai/rss-outbox/cmd"
 	"github.com/FKouhai/rss-outbox/store"
 	_ "github.com/go-sql-driver/mysql"
@@ -24,15 +23,13 @@ func main() {
 	defer stop()
 
 	cfg := cmd.Config{
-		BaseConfig: service.BaseConfig{
-			ServiceFQDN: os.Getenv("SERVICE_FQDN"),
-			HTTPAddr:    envOr("OUTBOX_HTTP_ADDR", ":3000"),
-			SkipLocator: os.Getenv("OUTBOX_SKIP_LOCATOR") == "1",
-			SkipTracer:  os.Getenv("OUTBOX_SKIP_TRACER") == "1",
-		},
-		NATSURL:  os.Getenv("NATS_URL"),
-		DBDriver: store.Driver(os.Getenv("OUTBOX_DB_DRIVER")),
-		DBDSN:    os.Getenv("OUTBOX_DB_DSN"),
+		ServiceFQDN: os.Getenv("SERVICE_FQDN"),
+		HTTPAddr:    envOr("OUTBOX_HTTP_ADDR", ":3000"),
+		SkipLocator: os.Getenv("OUTBOX_SKIP_LOCATOR") == "1",
+		SkipTracer:  os.Getenv("OUTBOX_SKIP_TRACER") == "1",
+		NATSURL:     os.Getenv("NATS_URL"),
+		DBDriver:    store.Driver(os.Getenv("OUTBOX_DB_DRIVER")),
+		DBDSN:       os.Getenv("OUTBOX_DB_DSN"),
 	}
 
 	app, err := cmd.Run(ctx, cfg)
