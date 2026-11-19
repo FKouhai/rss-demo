@@ -22,13 +22,11 @@ func newTestApp(t *testing.T) *App {
 	t.Helper()
 	dsn := filepath.Join(t.TempDir(), "outbox_cmd_test.db")
 	app, err := Run(context.Background(), Config{
-		BaseConfig: service.BaseConfig{
-			HTTPAddr:    "127.0.0.1:0",
-			SkipLocator: true,
-			SkipTracer:  true,
-		},
-		DBDriver: store.DriverSQLite,
-		DBDSN:    dsn,
+		HTTPAddr:    "127.0.0.1:0",
+		SkipLocator: true,
+		SkipTracer:  true,
+		DBDriver:    store.DriverSQLite,
+		DBDSN:       dsn,
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
