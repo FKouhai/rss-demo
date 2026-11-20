@@ -5,11 +5,6 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
 
-    rust-overlay = {
-      url = "github:oxalica/rust-overlay";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-
     git-hooks = {
       url = "github:cachix/pre-commit-hooks.nix";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -30,7 +25,6 @@
       self,
       nixpkgs,
       flake-utils,
-      rust-overlay,
       git-hooks,
       go-overlay,
       nix2container,
@@ -42,7 +36,6 @@
         pkgs = import nixpkgs {
           inherit system;
           overlays = [
-            (import rust-overlay)
             go-overlay.overlays.default
           ];
         };
@@ -91,8 +84,6 @@
               nix2containerPkg
               ;
             go = workspaceGo;
-            pkgsWithRust = pkgs; # rust-overlay is already in pkgs
-            rustPlatform = pkgs.rustPlatform;
           }
         );
 
