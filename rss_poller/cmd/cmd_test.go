@@ -7,12 +7,10 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/FKouhai/rss-demo/libs/service"
 )
 
 // newTestApp starts an in-process poller on an ephemeral port. It skips
-// locator + tracer so the test stays offline and hermetic, points
+// the tracer so the test stays offline and hermetic, points
 // CONFIG_FILE at a nonexistent path so no polling starts, and points NATS
 // at an unroutable port so the run stays hermetic (NATS failure is
 // tolerated, like the outbox). Callers must call app.Shutdown via t.Cleanup
@@ -20,14 +18,10 @@ import (
 func newTestApp(t *testing.T) *App {
 	t.Helper()
 	t.Setenv("CONFIG_FILE", filepath.Join(t.TempDir(), "no-config.json"))
-	t.Setenv("LOCATOR_URL", "")
 	app, err := Run(context.Background(), Config{
-		BaseConfig: service.BaseConfig{
-			HTTPAddr:    "127.0.0.1:0",
-			SkipLocator: true,
-			SkipTracer:  true,
-		},
-		NATSURL: "nats://127.0.0.1:1", // unroutable
+		HTTPAddr:   "127.0.0.1:0",
+		SkipTracer: true,
+		NATSURL:    "nats://127.0.0.1:1", // unroutable
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)

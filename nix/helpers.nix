@@ -11,7 +11,7 @@
 let
   mkGoTest =
     { name, src }:
-    pkgs.stdenvNoCC.mkDerivation {
+    pkgs.stdenv.mkDerivation {
       name = "${name}-test";
       inherit src;
       dontBuild = true;
@@ -21,7 +21,8 @@ let
         workspaceGo
         pkgs.writableTmpDirAsHomeHook
       ];
-      checkPhase = "go test -v ./...";
+      # -race needs cgo + a C compiler; stdenv provides cc.
+      checkPhase = "go test -race -v ./...";
       installPhase = "mkdir \"$out\"";
     };
 

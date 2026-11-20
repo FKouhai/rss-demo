@@ -9,16 +9,14 @@ import (
 )
 
 // newTestApp starts an in-process notify on an ephemeral port. It skips
-// locator + tracer so the test stays offline and hermetic.
+// the tracer so the test stays offline and hermetic.
 // Callers must call app.Shutdown via t.Cleanup (wired here).
 func newTestApp(t *testing.T) *App {
 	t.Helper()
-	t.Setenv("LOCATOR_URL", "")
 	app, err := Run(context.Background(), Config{
-		HTTPAddr:    "127.0.0.1:0",
-		SkipLocator: true,
-		SkipTracer:  true,
-		NATSURL:     "nats://127.0.0.1:1",
+		HTTPAddr:   "127.0.0.1:0",
+		SkipTracer: true,
+		NATSURL:    "nats://127.0.0.1:1",
 	})
 
 	if err != nil {

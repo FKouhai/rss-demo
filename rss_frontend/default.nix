@@ -13,9 +13,6 @@ let
     src = ./.;
     npmDepsHash = "sha256-AsxSdFc+UTOBnTM2WQVRfz1aUk/cVIi/kwNbQLZ8PP4=";
     NODE_OPTIONS = "--openssl-legacy-provider";
-    # LOCATOR_URL is a runtime concern — blank it out at build time so any
-    # .env file cannot bake a localhost URL into the build output.
-    LOCATOR_URL = "";
     buildPhase = ''
       runHook preBuild
       npm run build

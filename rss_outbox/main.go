@@ -25,7 +25,6 @@ func main() {
 	cfg := cmd.Config{
 		ServiceFQDN: os.Getenv("SERVICE_FQDN"),
 		HTTPAddr:    envOr("OUTBOX_HTTP_ADDR", ":3000"),
-		SkipLocator: os.Getenv("OUTBOX_SKIP_LOCATOR") == "1",
 		SkipTracer:  os.Getenv("OUTBOX_SKIP_TRACER") == "1",
 		NATSURL:     os.Getenv("NATS_URL"),
 		DBDriver:    store.Driver(os.Getenv("OUTBOX_DB_DRIVER")),

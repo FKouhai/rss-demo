@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'preact/hooks';
-import { Server, Cpu, Bell, Activity, RefreshCw, AlertCircle, ShieldAlert } from 'lucide-preact';
+import { Cpu, Bell, Database, Activity, RefreshCw, AlertCircle, ShieldAlert } from 'lucide-preact';
 
 const REFRESH_MS = 30 * 1000; // 30 seconds
 
@@ -10,7 +10,7 @@ interface ServiceStatus {
 }
 
 const ServiceIcon = ({ name }: { name: string }) => {
-  if (name.includes('locator')) return <Server className="h-5 w-5 text-blue-500" />;
+  if (name.includes('outbox')) return <Database className="h-5 w-5 text-purple-500" />;
   if (name.includes('poller')) return <Cpu className="h-5 w-5 text-orange-500" />;
   if (name.includes('notify')) return <Bell className="h-5 w-5 text-green-500" />;
   return <Activity className="h-5 w-5 text-gray-500" />;

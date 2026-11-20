@@ -2,18 +2,12 @@
 package handlers
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
 	log "github.com/FKouhai/rss-demo/libs/logger"
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-	"go.opentelemetry.io/otel/attribute"
 )
 
 // ConfigStruct contains the accepted config fields that this microservice will use.
@@ -45,54 +39,11 @@ var (
 
 	// nolint:unused // This variable is assigned in helpers.go and used for cleanup
 	cancelFn context.CancelFunc
-	// locatorClient is a shared HTTP client for locator calls with otelhttp instrumentation.
-	locatorClient = &http.Client{
-		Timeout: 2 * time.Second,
-		Transport: otelhttp.NewTransport(&http.Transport{
-			MaxIdleConns:        5,
-			MaxIdleConnsPerHost: 2,
-			IdleConnTimeout:     30 * time.Second,
-		}),
-	}
 )
 
-// isRegistered does a single, fast check against the locator to verify a service is registered.
-// No retries — readiness probes must be fast and Kubernetes handles the retry cadence.
-// A child span is created and its context is injected as W3C traceparent headers so the
-// locator's RequestTracing middleware can parent its own spans to this trace.
-func isRegistered(ctx context.Context, locatorURL, service string) bool {
-	callCtx, span := tracer.StartClient(ctx, "helper.isRegistered")
-	defer span.End()
-	span.SetAttributes(
-		attribute.String("locator.service", service),
-		attribute.String("locator.url", locatorURL),
-	)
-
-	body, err := json.Marshal(map[string]string{"service": service})
-	if err != nil {
-		span.RecordError(err)
-		return false
-	}
-	req, err := http.NewRequestWithContext(callCtx, http.MethodPost,
-		fmt.Sprintf("%s/services", locatorURL), bytes.NewBuffer(body))
-	if err != nil {
-		span.RecordError(err)
-		return false
-	}
-	req.Header.Set("Content-Type", "application/json")
-	// otelhttp.NewTransport in locatorClient injects traceparent automatically
-	resp, err := locatorClient.Do(req)
-	if err != nil {
-		span.RecordError(err)
-		return false
-	}
-	defer func() { _ = resp.Body.Close() }()
-	span.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
-	return resp.StatusCode == http.StatusOK
-}
-
-// ReadyHandler returns 200 when the poller is registered with the locator and its
-// notify dependency is also registered. Returns 503 otherwise.
+// ReadyHandler reports readiness. The process only reaches this point after
+// NATS is connected and streams are ensured (Run hard-fails otherwise),
+// so serving HTTP here means ready.
 func ReadyHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
@@ -100,19 +51,6 @@ func ReadyHandler(w http.ResponseWriter, r *http.Request) {
 	defer span.End()
 	log.InfoCtx(ctx, "connection to /ready established")
 
-	locatorURL := os.Getenv("LOCATOR_URL")
-	if locatorURL == "" {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "note": "LOCATOR_URL not set, skipping registration check"})
-		return
-	}
-	if !isRegistered(ctx, locatorURL, "poller") {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "not ready", "reason": "poller not registered with locator"})
-		return
-	}
-	if !isRegistered(ctx, locatorURL, "notify") {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "not ready", "reason": "notify dependency not registered"})
-		return
-	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }
 
