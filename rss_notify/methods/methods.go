@@ -5,101 +5,26 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"time"
 
 	"github.com/FKouhai/rss-demo/libs/instrumentation"
 	log "github.com/FKouhai/rss-demo/libs/logger"
-	webhookpush "github.com/FKouhai/rss-notify/webhookPush"
-	"github.com/coder/websocket"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/trace"
-	"go.uber.org/zap"
 )
-
-type wsMessage struct {
-	FeedURLs    []string `json:"feed_url"`
-	WebhookURL  string   `json:"webhook_url"`
-	Traceparent string   `json:"traceparent,omitempty"`
-	Tracestate  string   `json:"tracestate,omitempty"`
-}
 
 // tracer is the service-scoped helper for notify spans.
 var tracer = instrumentation.ForService("notify")
 
-// WSHandler upgrades the connection to WebSocket and processes incoming notification messages.
-func WSHandler(w http.ResponseWriter, r *http.Request) {
-	conn, err := websocket.Accept(w, r, nil)
-	if err != nil {
-		log.ErrorFmt("WebSocket upgrade failed: %v", err)
-		return
-	}
-	defer func() { _ = conn.CloseNow() }()
-
-	log.Info("WebSocket connection from poller established")
-
-	for {
-		_, msg, err := conn.Read(r.Context())
-		if err != nil {
-			log.ErrorFmt("WebSocket read closed: %v", err)
-			return
-		}
-
-		var wsMsg wsMessage
-		if err := json.Unmarshal(msg, &wsMsg); err != nil {
-			log.ErrorFmt("WebSocket message unmarshal error: %v", err)
-			continue
-		}
-
-		carrier := propagation.MapCarrier{}
-		if wsMsg.Traceparent != "" {
-			carrier["traceparent"] = wsMsg.Traceparent
-		}
-		if wsMsg.Tracestate != "" {
-			carrier["tracestate"] = wsMsg.Tracestate
-		}
-		ctx := otel.GetTextMapPropagator().Extract(r.Context(), carrier)
-
-		extractedSpanCtx := trace.SpanContextFromContext(ctx)
-		httpSpanCtx := trace.SpanContextFromContext(r.Context())
-
-		log.DebugCtx(ctx, "[TRACE] WSHandler: trace context extraction",
-			zap.String("received_traceparent", wsMsg.Traceparent),
-			zap.String("extracted_trace_id", extractedSpanCtx.TraceID().String()),
-			zap.String("http_upgrade_trace_id", httpSpanCtx.TraceID().String()),
-			zap.Bool("trace_match", extractedSpanCtx.TraceID() == httpSpanCtx.TraceID()))
-
-		_, span := tracer.StartServer(ctx, "handlers.WSNotification")
-		span.SetAttributes(attribute.Int("messages.count", len(wsMsg.FeedURLs)))
-
-		var d webhookpush.DiscordNotification
-		message, err := d.GetContent(ctx, msg)
-		if err != nil {
-			span.RecordError(err)
-			span.End()
-			continue
-		}
-
-		_, err = d.SendNotification(ctx, message)
-		if err != nil {
-			span.RecordError(err)
-		}
-
-		log.DebugCtx(ctx, "[TRACE] WSHandler: notification processing complete")
-		span.End()
-	}
-}
-
-// DeprecatedPushHandler returns 410 Gone to signal that the HTTP push endpoint has been replaced by WebSocket.
+// DeprecatedPushHandler returns 410 Gone to signal that the HTTP push endpoint has been replaced.
 func DeprecatedPushHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusGone)
-	w.Write([]byte(`{"error":"deprecated, use WebSocket /ws"}`)) //nolint:errcheck
+	w.Write([]byte(`{"error":"deprecated"}`)) //nolint:errcheck
 }
 
 // ReadyHandler returns 200 when notify is registered with the locator. Returns 503 otherwise.
@@ -158,62 +83,6 @@ func ReadyHandler(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ready"}); err != nil {
 		log.ErrorFmt("failed to encode response: %v", err)
 	}
-}
-
-// PushNotificationHandler is the handler that is in charge of sending notification to the destination sourceloggers
-func PushNotificationHandler(w http.ResponseWriter, r *http.Request) {
-	ctx, span := tracer.StartServer(r.Context(), "handlers.PushNotification")
-	defer span.End()
-
-	log.InfoCtx(ctx, "connection established")
-
-	if r.Method != "POST" {
-		w.WriteHeader(http.StatusBadRequest)
-		log.Error("wrong method was used")
-		span.SetAttributes(attribute.Int("http.status_code", http.StatusBadRequest))
-		return
-	}
-
-	if r.Header.Get("Content-Type") != "application/json" {
-		w.WriteHeader(http.StatusBadRequest)
-		log.Info("not using json")
-		span.AddEvent("FAILED_TRANSACTION")
-		span.SetAttributes(attribute.Int("http.status_code", http.StatusBadRequest))
-		return
-	}
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		span.AddEvent("FAILED_TRANSACTION")
-		instrumentation.Fail(span, err, "%s", err.Error())
-		span.SetAttributes(attribute.Int("http.status_code", http.StatusBadRequest))
-		return
-	}
-
-	var d webhookpush.DiscordNotification
-	message, err := d.GetContent(ctx, body)
-	if err != nil {
-		log.ErrorCtx(ctx, "fails here")
-		w.WriteHeader(http.StatusBadRequest)
-		span.AddEvent("FAILED_TRANSACTION")
-		instrumentation.Fail(span, err, "%s", err.Error())
-		span.SetAttributes(attribute.Int("http.status_code", http.StatusBadRequest))
-		return
-	}
-	span.SetAttributes(attribute.Int("messages.count", len(message)))
-
-	httpStatus, err := d.SendNotification(ctx, message)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		span.AddEvent("FAILED_TRANSACTION")
-		instrumentation.Fail(span, err, "%s", err.Error())
-		span.SetAttributes(attribute.Int("http.status_code", http.StatusInternalServerError))
-		return
-	}
-
-	w.WriteHeader(httpStatus)
-	span.SetAttributes(attribute.Int("http.status_code", httpStatus), attribute.Int("webhook.status", httpStatus))
 }
 
 // HealthzHandler is the route that exposes a healthcheck

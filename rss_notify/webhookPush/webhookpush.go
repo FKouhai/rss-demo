@@ -17,14 +17,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// PushMessage interface contains the function contracts that are required to be compliant with while sending a notification
-type PushMessage interface {
-	// GetContent returns a string that is bound to the specific destination(s) and error if the content parsing fails if it doesnt return nil
-	GetContent(ctx context.Context, content []byte) ([]string, error)
-	// SendNotification returns the http.StatusCode and error or nil
-	SendNotification(ctx context.Context, message []string) (int, error)
-}
-
 // DiscordNotification basic data structure that provides the Content and the webhook url for disrcord
 type DiscordNotification struct {
 	Content    []string `json:"feed_url"`
@@ -39,25 +31,8 @@ type DiscordMessage struct {
 	Content string `json:"content"`
 }
 
-// GetContent is the helper function that receives a feed as an input and returns the Data structure
-func (d *DiscordNotification) GetContent(ctx context.Context, content []byte) ([]string, error) {
-	_, span := tracer.Start(ctx, "webhookPush.GetContent")
-	defer span.End()
-	span.AddEvent("UNMARSHALING_JSON")
-	span.SetAttributes(attribute.Int("payload.size", len(content)))
-	err := json.Unmarshal(content, &d)
-	if err != nil {
-		span.RecordError(err)
-		log.InfoCtx(ctx, "got error unmarshaling JSON")
-		log.ErrorFmtCtx(ctx, "JSON unmarshal error: %v", err.Error())
-		log.ErrorFmtCtx(ctx, "Received payload: %s", string(content))
-		return nil, err
-	}
-	span.SetAttributes(attribute.Int("messages.count", len(d.Content)))
-	return d.Content, nil
-}
-
-// SendNotification method compliant with the PushMessage interface that sends a post request to the discord webhook endpoint
+// SendNotification sends a post request to the discord webhook endpoint,
+// returning the HTTP status code and error (or nil on success).
 func (d *DiscordNotification) SendNotification(ctx context.Context, message []string) (int, error) {
 	_, span := tracer.Start(ctx, "webhookPush.SendNotification")
 	defer span.End()
