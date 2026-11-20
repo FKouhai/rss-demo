@@ -95,6 +95,39 @@ func (c *Client) Consume(
 	return cc, nil
 }
 
+// FetchBatch pulls up to max messages from an existing durable consumer,
+// waiting up to wait for arrival. Unlike Consume it owns no ack lifecycle:
+// the caller acks each message individually, which makes it the right
+// primitive for batch dispatch where one action covers many messages.
+// An empty batch surfaces as nats.ErrTimeout; anything else is a real error.
+// No span is started here (fetch loops call this every second); span the
+// batch work at the call site instead.
+func (c *Client) FetchBatch(ctx context.Context, streamName, consumerName string, max int, wait time.Duration) ([]jetstream.Msg, error) {
+	if c.JsContext == nil {
+		return nil, errors.New("no jetstream context is available")
+	}
+	if max <= 0 {
+		return nil, errors.New("max must be positive")
+	}
+
+	cons, err := c.JsContext.Consumer(ctx, streamName, consumerName)
+	if err != nil {
+		return nil, err
+	}
+	batch, err := cons.Fetch(max, jetstream.FetchMaxWait(wait))
+	if err != nil {
+		return nil, err
+	}
+	var msgs []jetstream.Msg
+	for m := range batch.Messages() {
+		msgs = append(msgs, m)
+	}
+	if err := batch.Error(); err != nil {
+		return msgs, err
+	}
+	return msgs, nil
+}
+
 // processMessage is the per-message adapter body: extract trace, start a
 // consumer span, invoke the handler, and map the returned decision to an ack.
 func processMessage(tracer instrumentation.Tracer, handler MessageHandler, msg jetstream.Msg, opts ConsumeOptions) {
