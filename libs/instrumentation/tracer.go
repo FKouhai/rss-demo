@@ -50,7 +50,7 @@ func (t Tracer) StartServer(ctx context.Context, op string) (context.Context, tr
 }
 
 // StartClient begins a client span for an outbound call (feed fetch,
-// webhook POST, locator query).
+// webhook POST, NATS lookup).
 func (t Tracer) StartClient(ctx context.Context, op string) (context.Context, trace.Span) {
 	return t.inner.Start(ctx, op, trace.WithSpanKind(trace.SpanKindClient))
 }

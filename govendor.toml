@@ -37,11 +37,6 @@ schema = 4
     hash = "sha256-7hRlwSR+fos1kx4VZmJ/7snR7zHh8ZFKX+qqqqGcQpY="
     go = "1.11"
     packages = ["github.com/cespare/xxhash/v2"]
-  [mod."github.com/coder/websocket"]
-    version = "v1.8.14"
-    hash = "sha256-3lTpVWweJJ+VjIIwcK9Ca+mWrbAYPxi4tx7anP1sFYw="
-    go = "1.23"
-    packages = ["github.com/coder/websocket", "github.com/coder/websocket/internal/bpool", "github.com/coder/websocket/internal/errd", "github.com/coder/websocket/internal/util", "github.com/coder/websocket/internal/wsjs"]
   [mod."github.com/davecgh/go-spew"]
     version = "v1.1.2-0.20180830191138-d8f796af33cc"
     hash = "sha256-fV9oI51xjHdOmEx6+dlq7Ku2Ag+m/bmbzPo6A4Y74qc="

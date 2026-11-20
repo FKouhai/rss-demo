@@ -2,33 +2,23 @@
 import '../styles/global.css';
 import Nav from '../components/Nav.astro';
 import Feeds from '../components/Feeds.tsx';
-import { lookupService, locatorEndpoint } from '../lib/locator';
+import { pollerUrl } from '../lib/services';
 
 let initialData = [];
 let error;
 
-if (!locatorEndpoint()) {
-  console.error('LOCATOR_URL environment variable is not set');
-  error = 'LOCATOR_URL is not configured. Set it to the service locator URL.';
-} else {
-  const pollerFqdn = await lookupService('poller');
-  if (!pollerFqdn) {
-    console.error('poller is not registered in the service locator');
-    error = 'poller is not registered in the service locator.';
-  } else {
-    try {
-      const response = await fetch(`${pollerFqdn}/rss`, {
-        headers: { 'Accept': 'application/json' },
-      });
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      initialData = await response.json();
-    } catch (e) {
-      console.error(`Failed to fetch from rss-poller (${pollerFqdn}):`, e);
-      error = 'RSS poller service is not running or returned an error.';
-    }
+const pollerFqdn = pollerUrl();
+try {
+  const response = await fetch(`${pollerFqdn}/rss`, {
+    headers: { 'Accept': 'application/json' },
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`);
   }
+  initialData = await response.json();
+} catch (e) {
+  console.error(`Failed to fetch from rss-poller (${pollerFqdn}):`, e);
+  error = 'RSS poller service is not running or returned an error.';
 }
 ---
 

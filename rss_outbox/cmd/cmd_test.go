@@ -10,23 +10,21 @@ import (
 	"time"
 
 	"github.com/FKouhai/rss-demo/libs/pubsub"
-	"github.com/FKouhai/rss-demo/libs/service"
 	"github.com/FKouhai/rss-outbox/store"
 	_ "modernc.org/sqlite"
 )
 
 // newTestApp starts an in-process outbox on an ephemeral port backed by a
-// temp-file sqlite DB. It skips locator + tracer so the test stays
-// offline and hermetic. Callers must call app.Shutdown.
+// temp-file sqlite DB. It skips the tracer so the test stays offline and
+// hermetic. Callers must call app.Shutdown.
 func newTestApp(t *testing.T) *App {
 	t.Helper()
 	dsn := filepath.Join(t.TempDir(), "outbox_cmd_test.db")
 	app, err := Run(context.Background(), Config{
-		HTTPAddr:    "127.0.0.1:0",
-		SkipLocator: true,
-		SkipTracer:  true,
-		DBDriver:    store.DriverSQLite,
-		DBDSN:       dsn,
+		HTTPAddr:   "127.0.0.1:0",
+		SkipTracer: true,
+		DBDriver:   store.DriverSQLite,
+		DBDSN:      dsn,
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -112,17 +110,14 @@ func TestApp_Run_StoreIsInitialized(t *testing.T) {
 
 func TestApp_Run_NATSNilWhenUnreachable(t *testing.T) {
 	// Point NATS at a port nothing listens on; Run must not fail — it
-	// just logs and continues with a nil connection (locator + tracer
-	// also skipped, so this is fully hermetic).
+	// just logs and continues with a nil connection (tracer also
+	// skipped, so this is fully hermetic).
 	app, err := Run(context.Background(), Config{
-		BaseConfig: service.BaseConfig{
-			HTTPAddr:    "127.0.0.1:0",
-			SkipLocator: true,
-			SkipTracer:  true,
-		},
-		NATSURL:  "nats://127.0.0.1:1", // unroutable
-		DBDriver: store.DriverSQLite,
-		DBDSN:    filepath.Join(t.TempDir(), "outbox_nats_test.db"),
+		HTTPAddr:   "127.0.0.1:0",
+		SkipTracer: true,
+		NATSURL:    "nats://127.0.0.1:1", // unroutable
+		DBDriver:   store.DriverSQLite,
+		DBDSN:      filepath.Join(t.TempDir(), "outbox_nats_test.db"),
 	})
 	if err != nil {
 		t.Fatalf("Run with unreachable NATS: %v", err)

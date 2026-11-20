@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { lookupService, locatorEndpoint } from '@/lib/locator';
+import { configUrl } from '@/lib/services';
 
 type Destination = {
   id: string;
@@ -14,11 +14,9 @@ let mockDestinations: Destination[] = [
 ];
 
 const proxyToConfig = async (path: string, init?: RequestInit): Promise<Response | null> => {
-  if (!locatorEndpoint()) return null;
-  const fqdn = await lookupService('config');
-  if (!fqdn) return null;
+  // No config service yet — direct DNS fails fast and callers fall back to mocks.
   try {
-    const res = await fetch(`${fqdn}${path}`, { signal: AbortSignal.timeout(2000), ...init });
+    const res = await fetch(`${configUrl()}${path}`, { signal: AbortSignal.timeout(2000), ...init });
     if (res.ok) return res;
   } catch {}
   return null;

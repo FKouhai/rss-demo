@@ -1,14 +1,8 @@
 import type { APIRoute } from 'astro';
-import { lookupService, locatorEndpoint } from '@/lib/locator';
+import { pollerUrl } from '@/lib/services';
 
 export const GET: APIRoute = async () => {
-  const fqdn = await lookupService('poller');
-  if (!fqdn) {
-    return new Response(JSON.stringify({ error: 'poller not registered in service locator' }), {
-      status: 503,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
+  const fqdn = pollerUrl();
   try {
     const res = await fetch(`${fqdn}/config/feeds`, {
       signal: AbortSignal.timeout(5000),
@@ -30,13 +24,6 @@ export const GET: APIRoute = async () => {
 };
 
 export const POST: APIRoute = async ({ request }) => {
-  if (!locatorEndpoint()) {
-    return new Response(JSON.stringify({ error: 'LOCATOR_URL not configured' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-
   let body: unknown;
   try {
     body = await request.json();
@@ -47,13 +34,7 @@ export const POST: APIRoute = async ({ request }) => {
     });
   }
 
-  const fqdn = await lookupService('poller');
-  if (!fqdn) {
-    return new Response(JSON.stringify({ error: 'poller is not registered in the service locator' }), {
-      status: 503,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
+  const fqdn = pollerUrl();
 
   try {
     const res = await fetch(`${fqdn}/config`, {

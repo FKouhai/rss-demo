@@ -8,7 +8,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/FKouhai/rss-demo/libs/service"
 	"github.com/FKouhai/rss-poller/cmd"
 )
 
@@ -20,13 +19,10 @@ func main() {
 	defer stop()
 
 	cfg := cmd.Config{
-		BaseConfig: service.BaseConfig{
-			ServiceFQDN: os.Getenv("SERVICE_FQDN"),
-			HTTPAddr:    envOr("POLLER_HTTP_ADDR", ":3000"),
-			SkipLocator: os.Getenv("POLLER_SKIP_LOCATOR") == "1",
-			SkipTracer:  os.Getenv("POLLER_SKIP_TRACER") == "1",
-		},
-		NATSURL: os.Getenv("NATS_URL"),
+		ServiceFQDN: os.Getenv("SERVICE_FQDN"),
+		HTTPAddr:    envOr("POLLER_HTTP_ADDR", ":3000"),
+		SkipTracer:  os.Getenv("POLLER_SKIP_TRACER") == "1",
+		NATSURL:     os.Getenv("NATS_URL"),
 	}
 
 	app, err := cmd.Run(ctx, cfg)

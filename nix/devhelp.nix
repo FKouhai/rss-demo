@@ -20,19 +20,6 @@ let
     echo ""
   '';
 
-  rustCommands = ''
-    echo "Rust/Cargo Commands:"
-    echo "  cargo build                 Build the project"
-    echo "  cargo build --release       Build release binary"
-    echo "  cargo test                  Run tests"
-    echo "  cargo clippy                Run linter"
-    echo "  cargo fmt                   Format code"
-    echo "  cargo fmt --check           Check formatting"
-    echo "  cargo audit                 Check for vulnerabilities"
-    echo "  cargo outdated              Check for outdated deps"
-    echo ""
-  '';
-
   nodejsCommands = ''
     echo "Node.js/npm Commands:"
     echo "  npm install                 Install dependencies"
@@ -106,8 +93,8 @@ let
           ""
       }
       ${
-        if shellName != "locator" then
-          ''echo "  nix develop .#rss_locator   Enter locator dev environment (Rust)"''
+        if shellName != "outbox" then
+          ''echo "  nix develop .#rss_outbox    Enter outbox dev environment (Go)"''
         else
           ""
       }
@@ -137,8 +124,6 @@ pkgs.writeShellScriptBin "devhelp" ''
   ${
     if serviceType == "go" then
       goCommands
-    else if serviceType == "rust" then
-      rustCommands
     else if serviceType == "nodejs" then
       nodejsCommands
     else if serviceType == "root" then

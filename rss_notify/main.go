@@ -27,7 +27,6 @@ func main() {
 	cfg := cmd.Config{
 		ServiceFQDN: os.Getenv("SERVICE_FQDN"),
 		HTTPAddr:    envOr("NOTIFY_HTTP_ADDR", ":3000"),
-		SkipLocator: os.Getenv("NOTIFY_SKIP_LOCATOR") == "1",
 		SkipTracer:  os.Getenv("NOTIFY_SKIP_TRACER") == "1",
 		NATSURL:     os.Getenv("NATS_URL"),
 	}

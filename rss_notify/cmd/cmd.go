@@ -20,8 +20,7 @@ import (
 
 // Config is the notify bootstrap config shared by all Go services.
 // It is an alias, not a new struct: notify adds no service-specific
-// bootstrap fields, so construction sites stay flat
-// (Config{HTTPAddr: ..., SkipLocator: ...}).
+// bootstrap fields, so construction sites stay flat.
 type Config struct {
 	service.BaseConfig
 	NATSURL string

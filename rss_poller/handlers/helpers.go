@@ -65,7 +65,7 @@ func configFilePath() string {
 // If the file is absent it is a no-op; the service waits for the config
 // service. If feeds are present, polling starts immediately.
 func LoadConfig(ctx context.Context) {
-	_, span := tracer.Start(ctx, "bootstrap.LoadConfig")
+	_, span := tracer.Start(ctx, "poller.LoadConfig")
 	defer span.End()
 
 	path := configFilePath()

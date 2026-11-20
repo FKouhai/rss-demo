@@ -242,90 +242,22 @@ func TestConfigFilePath(t *testing.T) {
 	})
 }
 
-func TestIsRegistered(t *testing.T) {
-	t.Run("ReturnsTrueFor200", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-		}))
-		defer srv.Close()
-		if !isRegistered(context.Background(), srv.URL, "poller") {
-			t.Error("expected true for 200 response")
-		}
-	})
-	t.Run("ReturnsFalseForNon200", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusNotFound)
-		}))
-		defer srv.Close()
-		if isRegistered(context.Background(), srv.URL, "poller") {
-			t.Error("expected false for 404 response")
-		}
-	})
-	t.Run("ReturnsFalseOnConnectionError", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-		srv.Close() // immediately close to force a connection refused error
-		if isRegistered(context.Background(), srv.URL, "poller") {
-			t.Error("expected false on connection error")
-		}
-	})
-}
-
 func TestReadyHandler(t *testing.T) {
-	t.Run("LOCATORURLNotSet", func(t *testing.T) {
-		t.Setenv("LOCATOR_URL", "")
-		req := httptest.NewRequest(http.MethodGet, "/ready", nil)
-		rr := httptest.NewRecorder()
-		ReadyHandler(rr, req)
-		if rr.Code != http.StatusOK {
-			t.Errorf("expected 200, got %d", rr.Code)
-		}
-	})
-	t.Run("PollerNotRegistered", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusNotFound)
-		}))
-		defer srv.Close()
-		t.Setenv("LOCATOR_URL", srv.URL)
-		req := httptest.NewRequest(http.MethodGet, "/ready", nil)
-		rr := httptest.NewRecorder()
-		ReadyHandler(rr, req)
-		if rr.Code != http.StatusServiceUnavailable {
-			t.Errorf("expected 503, got %d", rr.Code)
-		}
-	})
-	t.Run("NotifyNotRegistered", func(t *testing.T) {
-		// First call (poller check) → 200; second call (notify check) → 404.
-		callCount := 0
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			callCount++
-			if callCount == 1 {
-				w.WriteHeader(http.StatusOK)
-			} else {
-				w.WriteHeader(http.StatusNotFound)
-			}
-		}))
-		defer srv.Close()
-		t.Setenv("LOCATOR_URL", srv.URL)
-		req := httptest.NewRequest(http.MethodGet, "/ready", nil)
-		rr := httptest.NewRecorder()
-		ReadyHandler(rr, req)
-		if rr.Code != http.StatusServiceUnavailable {
-			t.Errorf("expected 503, got %d", rr.Code)
-		}
-	})
-	t.Run("AllRegistered", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-		}))
-		defer srv.Close()
-		t.Setenv("LOCATOR_URL", srv.URL)
-		req := httptest.NewRequest(http.MethodGet, "/ready", nil)
-		rr := httptest.NewRecorder()
-		ReadyHandler(rr, req)
-		if rr.Code != http.StatusOK {
-			t.Errorf("expected 200, got %d", rr.Code)
-		}
-	})
+	// Readiness no longer depends on any registry: serving HTTP means the
+	// process completed startup (NATS + streams would have hard-failed Run).
+	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	rr := httptest.NewRecorder()
+	ReadyHandler(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rr.Code)
+	}
+	var body map[string]string
+	if err := json.NewDecoder(rr.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["status"] != "ready" {
+		t.Errorf("body = %v, want status=ready", body)
+	}
 }
 func TestParseRSSAllFeedsFail(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

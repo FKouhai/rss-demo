@@ -1,18 +1,17 @@
 // Package service collapses the bootstrap prologue every Go service repeats
-// (tracer init, locator register + heartbeat, otelhttp HTTP serve) into two
-// calls. It is the shared core behind each service's cmd.Run; service-specific
-// wiring (NATS, store, handlers) stays in the service's own cmd package.
+// (tracer init, otelhttp HTTP serve) into two calls. It is the shared core
+// behind each service's cmd.Run; service-specific wiring (NATS, store,
+// handlers) stays in the service's own cmd package.
 //
 // Before (repeated ~40 lines per service): InitTracer + deferred Shutdown,
-// WaitForLocator + Init, 30s heartbeat goroutine, net.Listen + otelhttp +
-// Serve goroutine. After:
+// net.Listen + otelhttp + Serve goroutine. After:
 //
 //	handle, _ := service.Bootstrap(ctx, service.Config{ServiceName: "outbox"})
 //	srv, _ := service.ServeHTTP(":3000", mux, "rss_outbox")
 //
-// Both helpers stay non-fatal the way the hand-rolled code was: a missing
-// locator or tracer is logged, not returned as an error, so services still
-// boot in dev/test environments.
+// Both helpers stay non-fatal the way the hand-rolled code was: a failed
+// tracer init is logged, not returned as an error, so services still boot
+// in dev/test environments.
 package service
 
 import (
@@ -21,43 +20,30 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"time"
 
-	"github.com/FKouhai/rss-demo/libs/bootstrap"
 	"github.com/FKouhai/rss-demo/libs/instrumentation"
 	log "github.com/FKouhai/rss-demo/libs/logger"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
-// DefaultHeartbeatInterval is the cadence at which services re-register
-// with the locator so a locator restart self-heals.
-const DefaultHeartbeatInterval = 30 * time.Second
-
 // Config describes a service instance. Zero values resolve to production
-// defaults (FQDN "<name>:3000", HTTPAddr ":3000", 30s heartbeat).
+// defaults (FQDN "<name>:3000", HTTPAddr ":3000").
 type Config struct {
 	ServiceName string
 	ServiceFQDN string
 	HTTPAddr    string
-	// SkipLocator bypasses WaitForLocator/Init/heartbeat. Set in tests
-	// and local dev without a locator; the service runs unregistered.
-	SkipLocator bool
 	// SkipTracer bypasses the OTEL exporter init (which dials
-	// localhost:4317). Set in tests so they stay offline/hermetic.
+	// localhost:4317). Set by tests so they stay offline/hermetic.
 	SkipTracer bool
-	// HeartbeatInterval overrides DefaultHeartbeatInterval. Zero means
-	// the default. Exposed mainly so tests can use a short interval.
-	HeartbeatInterval time.Duration
 }
 
 // Handle owns the bootstrap-owned resources for a service: the tracer
-// provider and the heartbeat goroutine. Close it with Shutdown.
+// provider. Close it with Shutdown.
 type Handle struct {
 	ServiceName string
 	FQDN        string
 	TP          *sdktrace.TracerProvider
-	cancel      context.CancelFunc
 }
 
 // EnvOr returns the named environment variable, or def when unset/empty.
@@ -74,19 +60,14 @@ func ResolveFQDN(serviceName string) string {
 	return EnvOr("SERVICE_FQDN", serviceName+":3000")
 }
 
-// Bootstrap inits the tracer and registers with the locator, starting a
-// ctx-aware heartbeat goroutine. Locator/tracer failures are logged, not
-// returned, matching the historical per-service behavior.
+// Bootstrap inits the tracer. A tracer failure is logged, not returned,
+// matching the historical per-service behavior.
 func Bootstrap(ctx context.Context, cfg Config) (*Handle, error) {
 	if cfg.ServiceName == "" {
 		return nil, errors.New("service: ServiceName is required")
 	}
 	if cfg.ServiceFQDN == "" {
 		cfg.ServiceFQDN = ResolveFQDN(cfg.ServiceName)
-	}
-	interval := cfg.HeartbeatInterval
-	if interval <= 0 {
-		interval = DefaultHeartbeatInterval
 	}
 
 	h := &Handle{ServiceName: cfg.ServiceName, FQDN: cfg.ServiceFQDN}
@@ -100,48 +81,16 @@ func Bootstrap(ctx context.Context, cfg Config) (*Handle, error) {
 		}
 	}
 
-	if !cfg.SkipLocator {
-		if err := bootstrap.WaitForLocator(); err != nil {
-			log.ErrorFmt("Locator service not available: %v", err)
-		} else if err := bootstrap.Init(ctx, cfg.ServiceName, cfg.ServiceFQDN); err != nil {
-			log.ErrorFmt("Failed to register %s with locator: %v", cfg.ServiceName, err)
-		} else {
-			heartbeatCtx, cancel := context.WithCancel(context.Background())
-			h.cancel = cancel
-			go heartbeat(heartbeatCtx, cfg.ServiceName, cfg.ServiceFQDN, interval)
-		}
-	}
-
 	return h, nil
 }
 
-// Shutdown stops the heartbeat and flushes/shuts down the tracer,
-// returning any shutdown errors joined.
+// Shutdown flushes/shuts down the tracer, returning any shutdown error.
 func (h *Handle) Shutdown(ctx context.Context) error {
-	if h.cancel != nil {
-		h.cancel()
-	}
 	if h.TP != nil {
 		_ = h.TP.ForceFlush(ctx)
 		return h.TP.Shutdown(ctx)
 	}
 	return nil
-}
-
-// heartbeat re-registers the service on a fixed cadence until ctx ends.
-func heartbeat(ctx context.Context, serviceName, fqdn string, interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := bootstrap.Init(ctx, serviceName, fqdn); err != nil {
-				log.ErrorFmt("heartbeat re-registration failed: %v", err)
-			}
-		}
-	}
 }
 
 // Server is a bound HTTP server. Ready fires once the OS is accepting
@@ -193,11 +142,6 @@ type BaseConfig struct {
 	ServiceFQDN string
 	HTTPAddr    string // defaults to ":3000"
 
-	// SkipLocator skips bootstrap.WaitForLocator/Init/heartbeat.
-	// Set by tests (and local dev) that don't run the locator;
-	// the service still works, just unregistered.
-	SkipLocator bool
-
 	// SkipTracer skips OTEL exporter init (which dials localhost:4317).
 	// Set by tests so they stay offline/hermetic.
 	SkipTracer bool
@@ -214,19 +158,18 @@ func (c *BaseConfig) WithDefaults(serviceName string) {
 	}
 }
 
-// Bootstrap inits the tracer and registers serviceName with the locator.
+// Bootstrap inits the tracer for serviceName.
 func (c BaseConfig) Bootstrap(ctx context.Context, serviceName string) (*Handle, error) {
 	return Bootstrap(ctx, Config{
 		ServiceName: serviceName,
 		ServiceFQDN: c.ServiceFQDN,
-		SkipLocator: c.SkipLocator,
 		SkipTracer:  c.SkipTracer,
 	})
 }
 
 // BaseApp owns the bootstrap-owned lifecycle shared by every service: the
-// HTTP server and the tracer/heartbeat handle. Service cmd packages embed
-// it (`service.BaseApp`) and add their own handles (NATS, store, ...);
+// HTTP server and the tracer handle. Service cmd packages embed
+// `service.BaseApp` and add their own handles (NATS, store, ...);
 // Ready/Addr/Shutdown promote, and Shutdown stays nil-tolerant so failure
 // paths mid-Run can delegate to it unconditionally.
 type BaseApp struct {
@@ -240,7 +183,7 @@ func (a *BaseApp) Ready() <-chan struct{} { return a.HTTP.Ready() }
 // Addr is the bound HTTP address (useful when HTTPAddr was ":0").
 func (a *BaseApp) Addr() net.Addr { return a.HTTP.Addr() }
 
-// Shutdown stops the server and the tracer/heartbeat, joining errors.
+// Shutdown stops the server and the tracer, joining errors.
 func (a *BaseApp) Shutdown(ctx context.Context) error {
 	var errs []error
 	if a.HTTP != nil {

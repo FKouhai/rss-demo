@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"net/http"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -37,11 +36,10 @@ func TestBootstrap_RequiresServiceName(t *testing.T) {
 	}
 }
 
-func TestBootstrap_SkipsOffline(t *testing.T) {
+func TestBootstrap_SkipsTracer(t *testing.T) {
 	t.Setenv("SERVICE_FQDN", "")
 	h, err := Bootstrap(context.Background(), Config{
 		ServiceName: "test-svc",
-		SkipLocator: true,
 		SkipTracer:  true,
 	})
 	if err != nil {
@@ -57,44 +55,6 @@ func TestBootstrap_SkipsOffline(t *testing.T) {
 	defer cancel()
 	if err := h.Shutdown(ctx); err != nil {
 		t.Errorf("Shutdown: %v", err)
-	}
-}
-
-func TestBootstrap_RegistersWithLocator(t *testing.T) {
-	var registers atomic.Int32
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	mux.HandleFunc("/register", func(w http.ResponseWriter, _ *http.Request) {
-		registers.Add(1)
-		_, _ = w.Write([]byte(`{"message":"ok"}`))
-	})
-	srv, err := ServeHTTP("127.0.0.1:0", mux, "fake-locator")
-	if err != nil {
-		t.Fatalf("ServeHTTP: %v", err)
-	}
-	<-srv.Ready()
-	defer srv.Shutdown(context.Background()) // nolint
-
-	t.Setenv("LOCATOR_URL", "http://"+srv.Addr().String())
-
-	h, err := Bootstrap(context.Background(), Config{
-		ServiceName:       "test-svc",
-		SkipTracer:        true,
-		HeartbeatInterval: 20 * time.Millisecond,
-	})
-	if err != nil {
-		t.Fatalf("Bootstrap: %v", err)
-	}
-	defer h.Shutdown(context.Background()) // nolint
-
-	deadline := time.Now().Add(2 * time.Second)
-	for registers.Load() < 2 && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
-	if got := registers.Load(); got < 2 {
-		t.Errorf("register calls = %d, want >= 2 (initial + heartbeat)", got)
 	}
 }
 
@@ -157,7 +117,7 @@ func TestBaseConfig_WithDefaults(t *testing.T) {
 
 func TestBaseConfig_BootstrapSkips(t *testing.T) {
 	t.Setenv("SERVICE_FQDN", "")
-	h, err := BaseConfig{SkipLocator: true, SkipTracer: true}.Bootstrap(context.Background(), "test-svc")
+	h, err := BaseConfig{SkipTracer: true}.Bootstrap(context.Background(), "test-svc")
 	if err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
