@@ -15,6 +15,8 @@ pkgs.mkShell {
   inherit shellHook;
   packages = [
     go
+    # C compiler so `go test -race` works under `nix develop`.
+    pkgs.gcc
   ]
   ++ pkgs.lib.optional (devHelp != null) devHelp
   ++ enabledPackages;

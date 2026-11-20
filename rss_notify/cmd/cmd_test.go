@@ -18,7 +18,9 @@ func newTestApp(t *testing.T) *App {
 		HTTPAddr:    "127.0.0.1:0",
 		SkipLocator: true,
 		SkipTracer:  true,
+		NATSURL:     "nats://127.0.0.1:1",
 	})
+
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
