@@ -1,0 +1,71 @@
+{{- $svc := .Values.services.poller }}
+{{- $name := printf "%s-poller" (include "rss-stack.fullname" .) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "rss-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/name: rss-poller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "rss-stack.selector" (dict "root" $ "name" "rss-poller") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "rss-stack.labels" . | nindent 8 }}
+        app.kubernetes.io/name: rss-poller
+    spec:
+      containers:
+        - name: poller
+          image: {{ include "rss-stack.image" (dict "root" $ "tag" $svc.tag "repository" $svc.repository) }}
+          ports:
+            - containerPort: 3000
+          env:
+            - name: SERVICE_FQDN
+              value: {{ printf "%s:3000" $name | quote }}
+            - name: OTEL_EP
+              value: {{ required "otel.endpoint is required (no default)" .Values.otel.endpoint | quote }}
+            - name: NATS_URL
+              value: {{ include "rss-stack.natsUrl" (dict "root" $ "svc" $svc) | quote }}
+            - name: POLLER_NATS_RETRY_BUDGET
+              value: "60s"
+            - name: CONFIG_URL
+              value: {{ $svc.configUrl | default (include "rss-stack.svcUrl" (dict "root" $ "svc" "config")) | quote }}
+            {{- if .Values.secrets.webhookSecret }}
+            - name: DEFAULT_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.webhookSecret | quote }}
+                  key: webhook-url
+            {{- end }}
+            {{- range $k, $v := $svc.env }}
+            - name: {{ $k | quote }}
+              value: {{ $v | quote }}
+            {{- end }}
+            {{- range $svc.extraEnv }}
+            - name: {{ .name | quote }}
+              value: {{ .value | quote }}
+            {{- end }}
+          {{- include "rss-stack.probes" . | nindent 10 }}
+          {{- with $svc.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "rss-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/name: rss-poller
+spec:
+  selector:
+    {{- include "rss-stack.selector" (dict "root" $ "name" "rss-poller") | nindent 4 }}
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000

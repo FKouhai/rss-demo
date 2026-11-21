@@ -1,0 +1,43 @@
+rss-stack {{ .Chart.Version }} installed as "{{ .Release.Name }}".
+
+Services (ClusterIP, port 3000 unless noted):
+  frontend:   {{ include "rss-stack.fullname" . }}-frontend:80 -> :4321
+  poller:     {{ include "rss-stack.fullname" . }}-poller:3000
+  outbox:     {{ include "rss-stack.fullname" . }}-outbox:3000
+  notify:     {{ include "rss-stack.fullname" . }}-notify:3000
+  aggregator: {{ include "rss-stack.fullname" . }}-aggregator:3000
+  config:     {{ include "rss-stack.fullname" . }}-config:3000
+{{- if .Values.nats.enabled }}
+  nats:       {{ include "rss-stack.fullname" . }}-nats.{{ include "rss-stack.natsNamespace" . }}.svc.cluster.local:4222
+{{- end }}
+
+Prerequisites you must provide:
+  - otel.endpoint (no default): traces go nowhere without it.
+  - Pocket-ID (or compatible OIDC IdP) is external: register a
+    confidential client (PKCE S256, redirect <host>/auth/callback,
+    scopes openid email profile groups), then set
+    services.frontend.oidc (issuer, clientID, redirectUrl unless
+    ingress derives it, clientSecret + sessionKey secret refs).
+    Empty issuer = open mode (no login, matches local dev).
+{{- if .Values.secrets.webhookSecret }}
+  - Secret {{ .Values.secrets.webhookSecret }} (key "webhook-url").
+{{- else }}
+  - DEFAULT_WEBHOOK_URL is unset: set secrets.webhookSecret or the
+    poller posts nothing (notify marks rows failed).
+{{- end }}
+{{- if .Values.secrets.gatewaySecret }}
+  - Secret {{ .Values.secrets.gatewaySecret }} (key "gateway-secret").
+{{- else }}
+  - No gateway secret: config runs OPEN (any caller can mutate feeds).
+    Set secrets.gatewaySecret in anything beyond kind.
+{{- end }}
+{{- if eq (include "rss-stack.anyNatsAuth" .) "true" }}
+WARNING: NATS authSecrets are set but services ignore NATS creds until
+pubsub learns them. Auth-required brokers will fail to connect.
+{{- end }}
+{{- if .Values.ingress.enabled }}
+Frontend ingress: https://{{ .Values.ingress.host }} (TLS {{ .Values.ingress.tls.enabled }})
+{{- else }}
+Port-forward the frontend to browse:
+  kubectl port-forward svc/{{ include "rss-stack.fullname" . }}-frontend 4321:80
+{{- end }}

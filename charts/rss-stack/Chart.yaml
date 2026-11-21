@@ -1,0 +1,6 @@
+apiVersion: v2
+name: rss-stack
+description: RSS pipeline (poller, outbox, notify, aggregator, config, frontend) with NATS and per-service databases
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

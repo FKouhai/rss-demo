@@ -1,0 +1,82 @@
+{{- $svc := .Values.services.outbox }}
+{{- $name := printf "%s-outbox" (include "rss-stack.fullname" .) }}
+{{- $dir := "/var/lib/rss-outbox" }}
+{{- $file := "outbox.db" }}
+{{- if eq $svc.db.driver "sqlite" }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "rss-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/name: rss-outbox
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: {{ $svc.db.sqlite.storage }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "rss-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/name: rss-outbox
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "rss-stack.selector" (dict "root" $ "name" "rss-outbox") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "rss-stack.labels" . | nindent 8 }}
+        app.kubernetes.io/name: rss-outbox
+    spec:
+      containers:
+        - name: outbox
+          image: {{ include "rss-stack.image" (dict "root" $ "tag" $svc.tag "repository" $svc.repository) }}
+          ports:
+            - containerPort: 3000
+          env:
+            - name: SERVICE_FQDN
+              value: {{ printf "%s:3000" $name | quote }}
+            - name: OTEL_EP
+              value: {{ required "otel.endpoint is required (no default)" .Values.otel.endpoint | quote }}
+            - name: NATS_URL
+              value: {{ include "rss-stack.natsUrl" (dict "root" $ "svc" $svc) | quote }}
+            - name: OUTBOX_NATS_RETRY_BUDGET
+              value: "60s"
+            {{- include "rss-stack.dbEnv" (dict "svc" $svc "prefix" "OUTBOX_" "dir" $dir "file" $file) | nindent 12 }}
+            {{- range $k, $v := $svc.env }}
+            - name: {{ $k | quote }}
+              value: {{ $v | quote }}
+            {{- end }}
+            {{- range $svc.extraEnv }}
+            - name: {{ .name | quote }}
+              value: {{ .value | quote }}
+            {{- end }}
+          {{- include "rss-stack.probes" . | nindent 10 }}
+          {{- include "rss-stack.dbVolumeMounts" (dict "svc" $svc "dir" $dir) | nindent 10 }}
+          {{- with $svc.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- include "rss-stack.dbVolumes" (dict "svc" $svc "claim" $name) | nindent 6 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "rss-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/name: rss-outbox
+spec:
+  selector:
+    {{- include "rss-stack.selector" (dict "root" $ "name" "rss-outbox") | nindent 4 }}
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
