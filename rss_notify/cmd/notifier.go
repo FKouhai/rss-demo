@@ -42,10 +42,11 @@ var tracer = instrumentation.ForService("notify")
 
 type Notify struct {
 	nc *pubsub.Client
-	// maxItemAge bounds Discord posts to fresh items. Anything older is
-	// acked delivered but never posted: the read model already has it,
-	// and cold-start backlogs must not flood the channel. Zero disables
-	// the gate (everything posts).
+	// maxItemAge bounds Discord posts to fresh discoveries. Anything
+	// ingested longer ago is acked skipped, never posted: cold-start
+	// backlogs must not flood the channel, but new-to-us items post
+	// even when their feed date is old. Zero disables the gate
+	// (everything posts).
 	maxItemAge time.Duration
 	runCtx     context.Context
 	runCancel  context.CancelFunc
@@ -123,14 +124,14 @@ func (n *Notify) loop(ctx context.Context) {
 	}
 }
 
-// staleItem reports whether a delivery is too old to post. The feed's
-// own date is parsed as RFC3339; empty or unparseable values fail open
-// as fresh — a missed post is worse than a stale one.
-func staleItem(publishedAt string, maxAge time.Duration, now time.Time) bool {
-	if maxAge <= 0 || publishedAt == "" {
+// staleItem reports whether a delivery is too old to post. The
+// outbox ingest time is parsed as RFC3339; empty or unparseable values
+// fail open as fresh — a missed post is worse than a stale one.
+func staleItem(ingestedAt string, maxAge time.Duration, now time.Time) bool {
+	if maxAge <= 0 || ingestedAt == "" {
 		return false
 	}
-	ts, err := time.Parse(time.RFC3339, publishedAt)
+	ts, err := time.Parse(time.RFC3339, ingestedAt)
 	if err != nil {
 		return false
 	}
@@ -198,9 +199,9 @@ func (n *Notify) dispatchBatch(ctx context.Context, msgs []jetstream.Msg) {
 			continue
 		}
 		span.SetAttributes(attribute.String("outbox.id", dm.OutboxID))
-		if staleItem(dm.PublishedAt, n.maxItemAge, time.Now()) {
-			// Cold-start backlog: the read model already has it;
-			// posting it would flood the channel with stale news.
+		if staleItem(dm.IngestedAt, n.maxItemAge, time.Now()) {
+			// Cold-start backlog: discovered long ago, never delivered;
+			// posting it now would flood the channel with stale news.
 			// Ack skipped (terminal, nothing to retry) with the
 			// reason, and move on.
 			stale++
