@@ -112,6 +112,11 @@ func FromContext(ctx context.Context) (Identity, bool) {
 	return id, ok
 }
 
+// WithIdentity returns a context carrying id for FromContext/TenantID.
+func WithIdentity(ctx context.Context, id Identity) context.Context {
+	return context.WithValue(ctx, ctxKey{}, id)
+}
+
 // TenantID returns the tenant for ctx, or "" when anonymous/missing.
 func TenantID(ctx context.Context) string {
 	id, ok := FromContext(ctx)
