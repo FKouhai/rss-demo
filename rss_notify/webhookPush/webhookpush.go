@@ -14,6 +14,7 @@ import (
 	log "github.com/FKouhai/rss-demo/libs/logger"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
 
@@ -32,23 +33,29 @@ type DiscordMessage struct {
 }
 
 // SendNotification sends a post request to the discord webhook endpoint,
-// returning the HTTP status code and error (or nil on success).
-func (d *DiscordNotification) SendNotification(ctx context.Context, message []string) (int, error) {
-	_, span := tracer.Start(ctx, "webhookPush.SendNotification")
+// returning the HTTP status code and error (or nil on success). The POST
+// (and the marshal before it) nest under the caller's span via spanCtx;
+// extra links join the other deliveries sharing this combined post, so one
+// Discord message doesn't scatter across N traces.
+func (d *DiscordNotification) SendNotification(ctx context.Context, message []string, links ...trace.Link) (int, error) {
+	spanCtx, span := tracer.Start(ctx, "webhookPush.SendNotification")
 	defer span.End()
 	span.AddEvent("SENDING_WEBHOOK")
 	span.SetAttributes(attribute.Int("messages.count", len(message)))
+	for _, l := range links {
+		span.AddLink(l)
+	}
 
 	log.DebugCtx(ctx, "[TRACE] SendNotification: incoming trace context",
 		zap.String("webhook_url", d.WebHookURL))
 
-	m, err := d.toDiscordMessage(ctx, message)
+	m, err := d.toDiscordMessage(spanCtx, message)
 	if err != nil {
 		span.RecordError(err)
 		return 0, err
 	}
 	r := bytes.NewBuffer(m)
-	req, err := http.NewRequestWithContext(ctx, "POST", d.WebHookURL, r)
+	req, err := http.NewRequestWithContext(spanCtx, "POST", d.WebHookURL, r)
 	if err != nil {
 		span.RecordError(err)
 		log.InfoCtx(ctx, "Failed to make request")
