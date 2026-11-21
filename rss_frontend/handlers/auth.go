@@ -7,10 +7,18 @@ import (
 	log "github.com/FKouhai/rss-demo/libs/logger"
 )
 
-// cookieFlags reports whether the request is TLS-terminated locally.
-// Secure cookies are only set on HTTPS; homelab plain-HTTP keeps login
-// working without them.
-func cookieFlags(r *http.Request) (secure bool) { return r.TLS != nil }
+// cookieFlags reports whether the request arrived over TLS. Secure
+// cookies are only set on HTTPS; plain-HTTP keeps login working without
+// them, and Traefik-terminated TLS is detected via X-Forwarded-Proto
+// (Traefik sets it; the app itself only ever sees plain HTTP). Without
+// this, __Host- cookies set without Secure are rejected by browsers
+// and login loops forever with no server-side error.
+func cookieFlags(r *http.Request) (secure bool) {
+	if r.TLS != nil {
+		return true
+	}
+	return r.Header.Get("X-Forwarded-Proto") == "https"
+}
 
 // loginHandler starts OIDC: persists the PKCE/state bundle in a
 // short-lived cookie and redirects to Pocket-ID (passkeys happen there).
@@ -29,8 +37,10 @@ func (d Deps) loginHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "login unavailable", http.StatusInternalServerError)
 		return
 	}
+	// __Host- cookies require Path=/ (browsers reject anything else),
+	// so the short-lived state bundle lives at root with a 5min MaxAge.
 	http.SetCookie(w, &http.Cookie{
-		Name: d.OIDC.StateCookieName(), Value: sealed, Path: "/auth/",
+		Name: d.OIDC.StateCookieName(), Value: sealed, Path: "/",
 		MaxAge: 300, HttpOnly: true, Secure: cookieFlags(r), SameSite: http.SameSiteLaxMode,
 	})
 	http.Redirect(w, r, req.URL, http.StatusFound)
@@ -78,7 +88,7 @@ func (d Deps) callbackHandler(w http.ResponseWriter, r *http.Request) {
 		MaxAge: 86400, HttpOnly: true, Secure: cookieFlags(r), SameSite: http.SameSiteLaxMode,
 	})
 	http.SetCookie(w, &http.Cookie{
-		Name: d.OIDC.StateCookieName(), Value: "", Path: "/auth/",
+		Name: d.OIDC.StateCookieName(), Value: "", Path: "/",
 		MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode,
 	})
 	http.Redirect(w, r, "/", http.StatusFound)
