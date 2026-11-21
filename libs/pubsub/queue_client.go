@@ -85,6 +85,38 @@ func (c *Client) Drain() error {
 	return nil
 }
 
+// DialWithRetry connects to NATS, retrying with backoff until budget runs
+// out or ctx ends. A budget <= 0 means a single attempt (the legacy path
+// tests rely on for hermetic nil-NATS boots). On exhaustion it returns the
+// last error and callers boot degraded — serving HTTP with /ready held at
+// 503 — instead of hanging startup forever.
+func DialWithRetry(ctx context.Context, url string, opts RssOptions, budget time.Duration) (*Client, error) {
+	if budget <= 0 {
+		return NewClient(url, opts)
+	}
+	deadline := time.Now().Add(budget)
+	var err error
+	var client *Client
+	for {
+		if client, err = NewClient(url, opts); err == nil {
+			return client, nil
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return nil, err
+		}
+		wait := 2 * time.Second
+		if remaining < wait {
+			wait = remaining
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(wait):
+		}
+	}
+}
+
 // EnsureStream bootstrap function to create streams in nats
 func (c *Client) EnsureStream(ctx context.Context, cfg jetstream.StreamConfig) (jetstream.Stream, error) {
 	if c.JsContext == nil {

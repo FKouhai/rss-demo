@@ -223,10 +223,13 @@ func recordAckErr(span trace.Span, err error, kind string) {
 	log.ErrorFmt("failed to %s message: %v", kind, err)
 }
 
-// recordHandlerErr records a handler-returned error on the span, if any.
+// recordHandlerErr records a handler-returned error on the span and logs
+// it. Logs matter here: a Nack without a log line is invisible everywhere
+// except Jaeger, which once hid a sqlite-locking outage behind clean logs.
 func recordHandlerErr(span trace.Span, err error) {
 	if err != nil {
 		span.RecordError(err)
+		log.ErrorFmt("consume handler error: %v", err)
 	}
 }
 

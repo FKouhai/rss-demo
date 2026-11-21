@@ -99,6 +99,12 @@ let
           ""
       }
       ${
+        if shellName != "aggregator" then
+          ''echo "  nix develop .#rss_aggregator Enter aggregator dev environment (Go)"''
+        else
+          ""
+      }
+      ${
         if shellName != "frontend" then
           ''echo "  nix develop .#rss_frontend  Enter frontend dev environment (Node.js)"''
         else

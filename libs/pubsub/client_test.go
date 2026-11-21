@@ -2,6 +2,7 @@ package pubsub
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -30,6 +31,41 @@ func TestNewClient_InvalidURL(t *testing.T) {
 	// Port 1 is never bound: refused immediately, no broker or timeout needed.
 	if _, err := NewClient("nats://127.0.0.1:1", RssOptions{ServiceName: "test"}); err == nil {
 		t.Error("expected error for unreachable server, got nil")
+	}
+}
+
+func TestDialWithRetry_NoBudgetSingleAttempt(t *testing.T) {
+	// Budget <= 0 preserves the legacy single-attempt path: fast fail,
+	// which hermetic nil-NATS tests rely on.
+	start := time.Now()
+	if _, err := DialWithRetry(context.Background(), "nats://127.0.0.1:1", RssOptions{ServiceName: "test"}, 0); err == nil {
+		t.Error("expected error for unreachable server, got nil")
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Errorf("zero budget took %v, want a single fast attempt", elapsed)
+	}
+}
+
+func TestDialWithRetry_ExhaustsBudget(t *testing.T) {
+	// Unreachable broker with a small budget: returns the last error
+	// after the budget, without hanging.
+	start := time.Now()
+	if _, err := DialWithRetry(context.Background(), "nats://127.0.0.1:1", RssOptions{ServiceName: "test"}, 1200*time.Millisecond); err == nil {
+		t.Error("expected error after budget exhaustion, got nil")
+	}
+	if elapsed := time.Since(start); elapsed < time.Second || elapsed > 10*time.Second {
+		t.Errorf("budgeted dial took %v, want ~1.2s of retries", elapsed)
+	}
+}
+
+func TestDialWithRetry_ContextCancels(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+	if _, err := DialWithRetry(ctx, "nats://127.0.0.1:1", RssOptions{ServiceName: "test"}, time.Minute); !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want context.Canceled", err)
 	}
 }
 
