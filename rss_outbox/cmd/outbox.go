@@ -89,12 +89,13 @@ func (o *Outbox) Start(ctx context.Context) error {
 // dispatch of the same row dedupes at the broker.
 func (o *Outbox) dispatch(ctx context.Context, e store.Entry) error {
 	dm := pubsub.DeliveryMessage{
-		TenantID:   "default", // TODO(config service): resolve per routing rules
-		OutboxID:   e.ID,
-		WebhookURL: e.WebhookURL,
-		FeedURL:    e.FeedURL,
-		Title:      e.Title,
-		Link:       e.Link,
+		TenantID:    "default", // TODO(config service): resolve per routing rules
+		OutboxID:    e.ID,
+		WebhookURL:  e.WebhookURL,
+		FeedURL:     e.FeedURL,
+		Title:       e.Title,
+		Link:        e.Link,
+		PublishedAt: e.PublishedAt,
 	}
 	payload, err := json.Marshal(dm)
 	if err != nil {
@@ -115,13 +116,14 @@ func (o *Outbox) handleFeed(ctx context.Context, msg pubsub.Message) (pubsub.Ack
 		return pubsub.AckDecisionTerm, err
 	}
 	entry := store.Entry{
-		ID:         item.MsgID(),
-		FeedURL:    item.FeedURL,
-		Title:      item.Title,
-		Link:       item.Link,
-		WebhookURL: item.WebhookURL,
-		Status:     "pending",
-		CreatedAt:  time.Now().UTC(),
+		ID:          item.MsgID(),
+		FeedURL:     item.FeedURL,
+		Title:       item.Title,
+		Link:        item.Link,
+		PublishedAt: item.PublishedAt,
+		WebhookURL:  item.WebhookURL,
+		Status:      "pending",
+		CreatedAt:   time.Now().UTC(),
 	}
 	if _, err := o.store.Save(ctx, entry); err != nil {
 		if db.IsDuplicateKey(err) {
@@ -146,9 +148,12 @@ func (o *Outbox) handleAck(ctx context.Context, msg pubsub.Message) (pubsub.AckD
 		return pubsub.AckDecisionTerm, errors.New("outbox: ack missing outbox_id")
 	}
 	var err error
-	if ack.Status == pubsub.StatusDelivered {
+	switch ack.Status {
+	case pubsub.StatusDelivered:
 		err = o.store.MarkDelivered(ctx, ack.OutboxID)
-	} else {
+	case pubsub.StatusSkipped:
+		err = o.store.MarkSkipped(ctx, ack.OutboxID, ack.Error)
+	default:
 		err = o.store.MarkFailed(ctx, ack.OutboxID, ack.Error)
 	}
 	if err != nil {

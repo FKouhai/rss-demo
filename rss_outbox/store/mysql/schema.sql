@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS outbox (
     feed_url      VARCHAR(2048) NOT NULL,
     title         VARCHAR(512)  NOT NULL,
     link          VARCHAR(2048) NOT NULL,
+    published_at  VARCHAR(64)   NOT NULL DEFAULT '',
     webhook_url   VARCHAR(2048) NOT NULL,
     status        VARCHAR(16)   NOT NULL DEFAULT 'pending',
     error         VARCHAR(1024) NULL,

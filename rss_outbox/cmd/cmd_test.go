@@ -138,6 +138,43 @@ func TestApp_Run_NATSNilWhenUnreachable(t *testing.T) {
 	}
 }
 
+func TestApp_Run_Ready503WhenNATSDown(t *testing.T) {
+	// Same unroutable broker as the nil test: boot degrades and the
+	// readiness gate must hold at 503 instead of reporting ready.
+	app, err := Run(context.Background(), Config{
+		HTTPAddr:   "127.0.0.1:0",
+		SkipTracer: true,
+		NATSURL:    "nats://127.0.0.1:1",
+		DBDriver:   store.DriverSQLite,
+		DBDSN:      filepath.Join(t.TempDir(), "outbox_ready_test.db"),
+	})
+	if err != nil {
+		t.Fatalf("Run with unreachable NATS: %v", err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = app.Shutdown(ctx)
+	})
+	waitForReady(t, app)
+
+	resp, err := http.Get("http://" + app.Addr().String() + "/ready")
+	if err != nil {
+		t.Fatalf("GET /ready: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("/ready status = %d, want 503 while NATS is down", resp.StatusCode)
+	}
+	var body map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode /ready body: %v", err)
+	}
+	if body["status"] != "not ready" {
+		t.Errorf("/ready body = %v, want not-ready status", body)
+	}
+}
+
 // newTestOutbox builds an Outbox over a temp-file sqlite store with no NATS
 // connection. Enough for handler paths that never publish (poison input,
 // ack application); dispatch paths need a broker (Phase 9).
@@ -253,5 +290,28 @@ func TestHandleAck_Failed(t *testing.T) {
 	}
 	if st.Failed != 1 || st.Pending != 0 {
 		t.Errorf("Status = %+v, want 1 failed / 0 pending", st)
+	}
+}
+
+func TestHandleAck_Skipped(t *testing.T) {
+	ob := newTestOutbox(t)
+	ctx := context.Background()
+	if _, err := ob.store.Save(ctx, store.Entry{ID: "x3", Status: "pending"}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	raw, _ := json.Marshal(pubsub.AckReply{TenantID: "default", OutboxID: "x3", Status: pubsub.StatusSkipped, Error: "older than max item age"})
+	decision, err := ob.handleAck(ctx, pubsub.Message{Data: raw})
+	if err != nil {
+		t.Fatalf("handleAck: %v", err)
+	}
+	if decision != pubsub.AckDecisionAck {
+		t.Errorf("decision = %v, want Ack", decision)
+	}
+	st, err := ob.store.Status(ctx)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if st.Skipped != 1 || st.Pending != 0 {
+		t.Errorf("Status = %+v, want 1 skipped / 0 pending", st)
 	}
 }

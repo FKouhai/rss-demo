@@ -31,6 +31,7 @@ type Entry struct {
 	FeedURL     string     `json:"feed_url"`
 	Title       string     `json:"title"`
 	Link        string     `json:"link"`
+	PublishedAt string     `json:"published_at"`
 	WebhookURL  string     `json:"webhook_url"`
 	Status      string     `json:"status"`
 	Error       string     `json:"error,omitempty"`
@@ -43,6 +44,7 @@ type Status struct {
 	Pending   int `json:"pending"`
 	Delivered int `json:"delivered"`
 	Failed    int `json:"failed"`
+	Skipped   int `json:"skipped"`
 }
 
 // Store is the engine-agnostic contract every backend must implement.
@@ -53,6 +55,9 @@ type Store interface {
 	GetPending(ctx context.Context) ([]Entry, error)
 	MarkDelivered(ctx context.Context, id string) error
 	MarkFailed(ctx context.Context, id string, errMsg string) error
+	// MarkSkipped terminally retires a row that must not be delivered
+	// (e.g. notify's stale-item gate); reason is kept in Error.
+	MarkSkipped(ctx context.Context, id string, reason string) error
 	Status(ctx context.Context) (Status, error)
 	Close() error
 }
@@ -65,17 +70,17 @@ type outboxStore struct {
 }
 
 func (s *outboxStore) Save(ctx context.Context, e Entry) (string, error) {
-	const q = `INSERT INTO outbox (id, feed_url, title, link, webhook_url, status, error, created_at, delivered_at) VALUES (`
-	qs := q + db.Placeholders(s.driver, 1, 9) + `)`
+	const q = `INSERT INTO outbox (id, feed_url, title, link, published_at, webhook_url, status, error, created_at, delivered_at) VALUES (`
+	qs := q + db.Placeholders(s.driver, 1, 10) + `)`
 	_, err := s.db.ExecContext(ctx, qs,
-		e.ID, e.FeedURL, e.Title, e.Link, e.WebhookURL, e.Status, e.Error, e.CreatedAt, e.DeliveredAt,
+		e.ID, e.FeedURL, e.Title, e.Link, e.PublishedAt, e.WebhookURL, e.Status, e.Error, e.CreatedAt, e.DeliveredAt,
 	)
 	return e.ID, err
 }
 
 func (s *outboxStore) GetPending(ctx context.Context) ([]Entry, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, feed_url, title, link, webhook_url, status, error, created_at, delivered_at
+		`SELECT id, feed_url, title, link, published_at, webhook_url, status, error, created_at, delivered_at
 		 FROM outbox WHERE status = 'pending' ORDER BY created_at`)
 	if err != nil {
 		return nil, err
@@ -87,7 +92,7 @@ func (s *outboxStore) GetPending(ctx context.Context) ([]Entry, error) {
 		var e Entry
 		var errMsg sql.NullString
 		var deliveredAt sql.NullTime
-		if err := rows.Scan(&e.ID, &e.FeedURL, &e.Title, &e.Link, &e.WebhookURL, &e.Status, &errMsg, &e.CreatedAt, &deliveredAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.FeedURL, &e.Title, &e.Link, &e.PublishedAt, &e.WebhookURL, &e.Status, &errMsg, &e.CreatedAt, &deliveredAt); err != nil {
 			return nil, err
 		}
 		e.Error = errMsg.String
@@ -109,6 +114,12 @@ func (s *outboxStore) MarkDelivered(ctx context.Context, id string) error {
 func (s *outboxStore) MarkFailed(ctx context.Context, id string, errMsg string) error {
 	q := `UPDATE outbox SET status = 'failed', error = ` + db.Placeholder(s.driver, 1) + ` WHERE id = ` + db.Placeholder(s.driver, 2)
 	_, err := s.db.ExecContext(ctx, q, errMsg, id)
+	return err
+}
+
+func (s *outboxStore) MarkSkipped(ctx context.Context, id string, reason string) error {
+	q := `UPDATE outbox SET status = 'skipped', error = ` + db.Placeholder(s.driver, 1) + ` WHERE id = ` + db.Placeholder(s.driver, 2)
+	_, err := s.db.ExecContext(ctx, q, reason, id)
 	return err
 }
 
@@ -134,6 +145,8 @@ func (s *outboxStore) Status(ctx context.Context) (Status, error) {
 			st.Delivered = int(count)
 		case "failed":
 			st.Failed = int(count)
+		case "skipped":
+			st.Skipped = int(count)
 		}
 	}
 	return st, rows.Err()

@@ -31,13 +31,14 @@ func mustSave(t *testing.T, s Store, ctx context.Context, e Entry) {
 
 func entry(id string, status string, createdAt time.Time) Entry {
 	return Entry{
-		ID:         id,
-		FeedURL:    "https://example.com/feed.xml",
-		Title:      "title-" + id,
-		Link:       "https://example.com/" + id,
-		WebhookURL: "https://hooks.example.com/" + id,
-		Status:     status,
-		CreatedAt:  createdAt,
+		ID:          id,
+		FeedURL:     "https://example.com/feed.xml",
+		Title:       "title-" + id,
+		Link:        "https://example.com/" + id,
+		PublishedAt: "2025-01-02T03:04:05Z",
+		WebhookURL:  "https://hooks.example.com/" + id,
+		Status:      status,
+		CreatedAt:   createdAt,
 	}
 }
 
@@ -63,6 +64,7 @@ func TestStore_SaveAndGetPending(t *testing.T) {
 		FeedURL:     "https://example.com/feed.xml",
 		Title:       "title-a1",
 		Link:        "https://example.com/a1",
+		PublishedAt: "2025-01-02T03:04:05Z",
 		WebhookURL:  "https://hooks.example.com/a1",
 		Status:      "pending",
 		Error:       "", // nullable col, stored empty
@@ -177,12 +179,37 @@ func TestStore_MarkFailed(t *testing.T) {
 	}
 }
 
+func TestStore_MarkSkipped(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	mustSave(t, s, ctx, entry("a1", "pending", time.Now().UTC()))
+
+	if err := s.MarkSkipped(ctx, "a1", "older than max item age"); err != nil {
+		t.Fatalf("MarkSkipped: %v", err)
+	}
+
+	pending, err := s.GetPending(ctx)
+	if err != nil {
+		t.Fatalf("GetPending: %v", err)
+	}
+	if len(pending) != 0 {
+		t.Errorf("after MarkSkipped: want 0 pending, got %d", len(pending))
+	}
+	st, err := s.Status(ctx)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if st.Skipped != 1 || st.Pending != 0 || st.Delivered != 0 || st.Failed != 0 {
+		t.Errorf("Status: want skipped=1, got %+v", st)
+	}
+}
+
 func TestStore_Status_AllStates(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
 
-	// 3 pending, 2 delivered, 1 failed
+	// 3 pending, 2 delivered, 1 failed, 1 skipped
 	for _, e := range []Entry{
 		entry("p1", "pending", now),
 		entry("p2", "pending", now.Add(time.Second)),
@@ -190,6 +217,7 @@ func TestStore_Status_AllStates(t *testing.T) {
 		entry("d1", "delivered", now),
 		entry("d2", "delivered", now),
 		entry("f1", "failed", now),
+		entry("s1", "skipped", now),
 	} {
 		mustSave(t, s, ctx, e)
 	}
@@ -198,8 +226,8 @@ func TestStore_Status_AllStates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
-	if st.Pending != 3 || st.Delivered != 2 || st.Failed != 1 {
-		t.Errorf("Status: want {pending=3 delivered=2 failed=1}, got %+v", st)
+	if st.Pending != 3 || st.Delivered != 2 || st.Failed != 1 || st.Skipped != 1 {
+		t.Errorf("Status: want {pending=3 delivered=2 failed=1 skipped=1}, got %+v", st)
 	}
 }
 
@@ -261,6 +289,9 @@ func assertEntryEqual(t *testing.T, got, want Entry) {
 	}
 	if got.Link != want.Link {
 		t.Errorf("Link = %q, want %q", got.Link, want.Link)
+	}
+	if got.PublishedAt != want.PublishedAt {
+		t.Errorf("PublishedAt = %q, want %q", got.PublishedAt, want.PublishedAt)
 	}
 	if got.WebhookURL != want.WebhookURL {
 		t.Errorf("WebhookURL = %q, want %q", got.WebhookURL, want.WebhookURL)

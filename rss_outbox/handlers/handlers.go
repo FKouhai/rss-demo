@@ -51,7 +51,7 @@ func OutboxStatusHandler(w http.ResponseWriter, r *http.Request) {
 
 	st, err := db.Status(r.Context())
 	if err != nil {
-		log.ErrorFmtCtx(r.Context(), "failed to get outbox status: %v", err)
+		instrumentation.Fail(span, err, "failed to get outbox status: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
