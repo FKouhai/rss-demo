@@ -316,6 +316,45 @@
   color: var(--paper);
 }
 
+button.btn {
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+button.btn.danger:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fffdf8;
+}
+
+.formrow {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.field {
+  background: var(--card);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  padding: 0.4rem 0.6rem;
+  font-size: 0.9rem;
+  font-family: inherit;
+}
+
+.field::placeholder {
+  color: var(--muted);
+}
+
+.field:focus {
+  outline: 1px solid var(--accent);
+  border-color: var(--accent);
+}
+
 .notice {
   border: 1px solid var(--line);
   border-left: 4px solid var(--accent);
