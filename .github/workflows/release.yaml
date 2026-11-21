@@ -79,3 +79,27 @@ jobs:
             "${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.image }}-${{ matrix.config.system }}:${{ github.ref_name }}"
           docker push \
             "${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.image }}-${{ matrix.config.system }}:${{ github.ref_name }}"
+
+  chart:
+    name: Publish Helm chart (OCI)
+    runs-on: ubuntu-latest
+    needs: publish
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Log in to GHCR (ORAS)
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Package and push rss-stack
+        run: |
+          OWNER="${GITHUB_REPOSITORY_OWNER,,}"
+          helm package charts/rss-stack \
+            --version "${{ github.ref_name }}" \
+            --app-version "${{ github.ref_name }}"
+          helm push "rss-stack-${{ github.ref_name }}.tgz" "oci://ghcr.io/${OWNER}/charts"
