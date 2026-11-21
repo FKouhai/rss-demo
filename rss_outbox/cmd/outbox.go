@@ -96,6 +96,9 @@ func (o *Outbox) dispatch(ctx context.Context, e store.Entry) error {
 		Title:       e.Title,
 		Link:        e.Link,
 		PublishedAt: e.PublishedAt,
+		// First-seen time drives the recency gate: new-to-us posts even
+		// when the feed date is old (e.g. newly surfaced HN stories).
+		IngestedAt: e.CreatedAt.UTC().Format(time.RFC3339),
 	}
 	payload, err := json.Marshal(dm)
 	if err != nil {

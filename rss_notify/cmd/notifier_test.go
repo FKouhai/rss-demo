@@ -160,10 +160,10 @@ func TestStaleItem(t *testing.T) {
 		t.Error("1h-old item with 2h max should be fresh")
 	}
 	if staleItem("", 2*time.Hour, now) {
-		t.Error("empty PublishedAt must fail open as fresh")
+		t.Error("empty IngestedAt must fail open as fresh")
 	}
 	if staleItem("not a date", 2*time.Hour, now) {
-		t.Error("unparseable PublishedAt must fail open as fresh")
+		t.Error("unparseable IngestedAt must fail open as fresh")
 	}
 	if staleItem(old, 0, now) {
 		t.Error("zero maxAge disables the gate")
