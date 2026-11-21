@@ -43,7 +43,7 @@ jobs:
           }
 
           ITEMS=()
-          for svc in rss_poller rss_notify rss_outbox rss_aggregator rss_frontend; do
+          for svc in rss_poller rss_notify rss_outbox rss_aggregator rss_config rss_frontend; do
             if shared_changed || echo "$CHANGED" | grep -qE "^${svc}/"; then
               nix_name="${svc//_/-}"
               if   [ -f "${svc}/go.mod" ];      then type="go"
