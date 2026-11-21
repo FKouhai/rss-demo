@@ -4,7 +4,7 @@ schema = 4
 
 [workspace]
   go = "1.27.4"
-  modules = [".", "./rss_aggregator", "./rss_frontend", "./rss_notify", "./rss_outbox", "./rss_poller"]
+  modules = [".", "./rss_aggregator", "./rss_config", "./rss_frontend", "./rss_notify", "./rss_outbox", "./rss_poller"]
 
 [mod]
   [mod."filippo.io/edwards25519"]

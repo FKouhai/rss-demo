@@ -10,4 +10,6 @@ use ./rss_outbox
 
 use ./rss_aggregator
 
+use ./rss_config
+
 use ./rss_frontend
