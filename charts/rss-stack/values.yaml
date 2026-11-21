@@ -1,0 +1,118 @@
+# Default values for rss-stack. This is the contract between the app
+# repo (builds + publishes images and this chart) and the infra repo
+# (nixidy renders a pinned chart version + per-env values via ArgoCD).
+
+global:
+  # Registry + org holding the service images (ghcr.io/<owner>).
+  imageRegistry: ghcr.io/fkouhai
+
+# OTEL collector endpoint. Required, no default: rendering without it
+# would silently drop traces.
+otel:
+  endpoint: ""
+
+nats:
+  enabled: true
+  # Empty = this release's namespace. Set for shared infra (services
+  # then address nats.<namespace> automatically unless overridden).
+  namespace: ""
+  # Overwritable; matches the local arion broker by default.
+  image: nats:2.14.3
+  storage: 1Gi
+  # Reserved: services ignore NATS creds until pubsub learns them
+  # (follow-up). Values accepted, chart warns, nothing is mounted.
+  # authSecret: ""
+
+# Existing Secrets only — never plaintext values in values files.
+secrets:
+  # Key "webhook-url" -> DEFAULT_WEBHOOK_URL (poller fallback).
+  webhookSecret: ""
+  # Key "gateway-secret" -> CONFIG_GATEWAY_SECRET (config + frontend).
+  gatewaySecret: ""
+
+ingress:
+  enabled: false
+  className: ""
+  host: rss.local
+  tls:
+    enabled: false
+    secretName: ""
+
+services:
+  poller:
+    repository: rss-poller
+    tag: "" # default Chart.AppVersion
+    resources: {}
+    # Empty url = chart default (embedded service or shared namespace).
+    nats: { url: "", authSecret: "" }
+    # Which config service to poll. Points at the in-chart one by default.
+    configUrl: ""
+    env: {}
+    extraEnv: []
+
+  outbox:
+    repository: rss-outbox
+    tag: ""
+    resources: {}
+    nats: { url: "", authSecret: "" }
+    db:
+      driver: sqlite # | postgres
+      sqlite: { storage: 1Gi }
+      postgres: { dsnSecret: "", dsnKey: dsn }
+    env: {}
+    extraEnv: []
+
+  notify:
+    repository: rss-notify
+    tag: ""
+    resources: {}
+    nats: { url: "", authSecret: "" }
+    env: {}
+    extraEnv: []
+
+  aggregator:
+    repository: rss-aggregator
+    tag: ""
+    resources: {}
+    nats: { url: "", authSecret: "" }
+    db:
+      driver: sqlite
+      sqlite: { storage: 1Gi }
+      postgres: { dsnSecret: "", dsnKey: dsn }
+    env: {}
+    extraEnv: []
+
+  config:
+    repository: rss-config
+    tag: ""
+    resources: {}
+    # No NATS in v1 (HTTP-only service); no nats block on purpose.
+    db:
+      driver: sqlite
+      sqlite: { storage: 1Gi }
+      postgres: { dsnSecret: "", dsnKey: dsn }
+    adminGroups: admin
+    env: {}
+    extraEnv: []
+
+  frontend:
+    repository: rss-frontend
+    tag: ""
+    resources: {}
+    # Which config service backs the Configure page.
+    configUrl: ""
+    # Must match rss_config's adminGroups: the frontend pre-checks,
+    # config enforces. Align with the IdP group name (e.g. "admins").
+    adminGroups: admin
+    # OIDC (Pocket-ID) login. Empty issuer = open mode (no login).
+    # Secrets come from existing Secrets; the IdP itself is external.
+    oidc:
+      issuer: ""
+      clientID: ""
+      # Empty = https://<ingress.host>/auth/callback when ingress is
+      # on; set explicitly otherwise.
+      redirectUrl: ""
+      clientSecret: { secretName: "", key: oidc-client-secret }
+      sessionKey: { secretName: "", key: session-key }
+    env: {}
+    extraEnv: []

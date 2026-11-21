@@ -1,0 +1,87 @@
+{{- $svc := .Values.services.config }}
+{{- $name := printf "%s-config" (include "rss-stack.fullname" .) }}
+{{- $dir := "/var/lib/rss-config" }}
+{{- $file := "config.db" }}
+{{- if eq $svc.db.driver "sqlite" }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "rss-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/name: rss-config
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: {{ $svc.db.sqlite.storage }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "rss-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/name: rss-config
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "rss-stack.selector" (dict "root" $ "name" "rss-config") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "rss-stack.labels" . | nindent 8 }}
+        app.kubernetes.io/name: rss-config
+    spec:
+      containers:
+        - name: config
+          image: {{ include "rss-stack.image" (dict "root" $ "tag" $svc.tag "repository" $svc.repository) }}
+          ports:
+            - containerPort: 3000
+          env:
+            - name: SERVICE_FQDN
+              value: {{ printf "%s:3000" $name | quote }}
+            - name: OTEL_EP
+              value: {{ required "otel.endpoint is required (no default)" .Values.otel.endpoint | quote }}
+            {{- include "rss-stack.dbEnv" (dict "svc" $svc "prefix" "CONFIG_" "dir" $dir "file" $file) | nindent 12 }}
+            - name: CONFIG_ADMIN_GROUPS
+              value: {{ $svc.adminGroups | quote }}
+            {{- if .Values.secrets.gatewaySecret }}
+            - name: CONFIG_GATEWAY_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.gatewaySecret | quote }}
+                  key: gateway-secret
+            {{- end }}
+            {{- range $k, $v := $svc.env }}
+            - name: {{ $k | quote }}
+              value: {{ $v | quote }}
+            {{- end }}
+            {{- range $svc.extraEnv }}
+            - name: {{ .name | quote }}
+              value: {{ .value | quote }}
+            {{- end }}
+          {{- include "rss-stack.probes" . | nindent 10 }}
+          {{- include "rss-stack.dbVolumeMounts" (dict "svc" $svc "dir" $dir) | nindent 10 }}
+          {{- with $svc.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- include "rss-stack.dbVolumes" (dict "svc" $svc "claim" $name) | nindent 6 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "rss-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/name: rss-config
+spec:
+  selector:
+    {{- include "rss-stack.selector" (dict "root" $ "name" "rss-config") | nindent 4 }}
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000

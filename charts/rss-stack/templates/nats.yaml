@@ -1,0 +1,68 @@
+{{- if .Values.nats.enabled }}
+{{- $ns := include "rss-stack.natsNamespace" . }}
+{{- $name := printf "%s-nats" (include "rss-stack.fullname" .) }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "rss-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/name: nats
+spec:
+  selector:
+    {{- include "rss-stack.selector" (dict "root" $ "name" "nats") | nindent 4 }}
+  ports:
+    - name: client
+      port: 4222
+      targetPort: 4222
+    - name: cluster
+      port: 6222
+      targetPort: 6222
+    - name: monitor
+      port: 8222
+      targetPort: 8222
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "rss-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/name: nats
+spec:
+  serviceName: {{ $name }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "rss-stack.selector" (dict "root" $ "name" "nats") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "rss-stack.labels" . | nindent 8 }}
+        app.kubernetes.io/name: nats
+    spec:
+      containers:
+        - name: nats
+          image: {{ .Values.nats.image }}
+          args: ["-js", "-m", "8222", "--store_dir", "/data/jetstream"]
+          ports:
+            - name: client
+              containerPort: 4222
+            - name: cluster
+              containerPort: 6222
+            - name: monitor
+              containerPort: 8222
+          volumeMounts:
+            - name: data
+              mountPath: /data/jetstream
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.nats.storage }}
+{{- end }}

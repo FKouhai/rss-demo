@@ -1,0 +1,141 @@
+{{- $svc := .Values.services.frontend }}
+{{- $name := printf "%s-frontend" (include "rss-stack.fullname" .) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "rss-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/name: rss-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "rss-stack.selector" (dict "root" $ "name" "rss-frontend") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "rss-stack.labels" . | nindent 8 }}
+        app.kubernetes.io/name: rss-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: {{ include "rss-stack.image" (dict "root" $ "tag" $svc.tag "repository" $svc.repository) }}
+          ports:
+            - containerPort: 4321
+          env:
+            - name: SERVICE_FQDN
+              value: {{ printf "%s:4321" $name | quote }}
+            - name: FRONTEND_HTTP_ADDR
+              value: ":4321"
+            - name: OTEL_EP
+              value: {{ required "otel.endpoint is required (no default)" .Values.otel.endpoint | quote }}
+            - name: AGGREGATOR_URL
+              value: {{ include "rss-stack.svcUrl" (dict "root" $ "svc" "aggregator") | quote }}
+            - name: OUTBOX_URL
+              value: {{ include "rss-stack.svcUrl" (dict "root" $ "svc" "outbox") | quote }}
+            - name: POLLER_URL
+              value: {{ include "rss-stack.svcUrl" (dict "root" $ "svc" "poller") | quote }}
+            - name: NOTIFY_URL
+              value: {{ include "rss-stack.svcUrl" (dict "root" $ "svc" "notify") | quote }}
+            - name: CONFIG_URL
+              value: {{ $svc.configUrl | default (include "rss-stack.svcUrl" (dict "root" $ "svc" "config")) | quote }}
+            - name: CONFIG_ADMIN_GROUPS
+              value: {{ $svc.adminGroups | default "admin" | quote }}
+            {{- $oidc := $svc.oidc }}
+            {{- if $oidc.issuer }}
+            {{- $redirect := $oidc.redirectUrl }}
+            {{- if and (not $redirect) $.Values.ingress.enabled }}
+            {{- $redirect = printf "https://%s/auth/callback" $.Values.ingress.host }}
+            {{- end }}
+            - name: OIDC_ISSUER_URL
+              value: {{ $oidc.issuer | quote }}
+            - name: OIDC_CLIENT_ID
+              value: {{ required "frontend.oidc.clientID is required when issuer is set" $oidc.clientID | quote }}
+            - name: OIDC_REDIRECT_URL
+              value: {{ required "frontend.oidc.redirectUrl is required when ingress is disabled" $redirect | quote }}
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "frontend.oidc.clientSecret.secretName is required when issuer is set" $oidc.clientSecret.secretName | quote }}
+                  key: {{ $oidc.clientSecret.key | default "oidc-client-secret" | quote }}
+            - name: AUTH_SESSION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "frontend.oidc.sessionKey.secretName is required when issuer is set" $oidc.sessionKey.secretName | quote }}
+                  key: {{ $oidc.sessionKey.key | default "session-key" | quote }}
+            {{- end }}
+            {{- if .Values.secrets.gatewaySecret }}
+            - name: CONFIG_GATEWAY_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.gatewaySecret | quote }}
+                  key: gateway-secret
+            {{- end }}
+            {{- range $k, $v := $svc.env }}
+            - name: {{ $k | quote }}
+              value: {{ $v | quote }}
+            {{- end }}
+            {{- range $svc.extraEnv }}
+            - name: {{ .name | quote }}
+              value: {{ .value | quote }}
+            {{- end }}
+          livenessProbe:
+            httpGet: { path: /healthz, port: 4321 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /ready, port: 4321 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          {{- with $svc.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "rss-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/name: rss-frontend
+spec:
+  selector:
+    {{- include "rss-stack.selector" (dict "root" $ "name" "rss-frontend") | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: 4321
+---
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "rss-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/name: rss-frontend
+  {{- with .Values.ingress.className }}
+  annotations:
+    kubernetes.io/ingress.class: {{ . | quote }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ required "ingress.tls.secretName is required when TLS is enabled" .Values.ingress.tls.secretName | quote }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $name }}
+                port:
+                  number: 80
+{{- end }}

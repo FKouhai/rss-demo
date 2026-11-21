@@ -1,0 +1,64 @@
+{{- $svc := .Values.services.notify }}
+{{- $name := printf "%s-notify" (include "rss-stack.fullname" .) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "rss-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/name: rss-notify
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "rss-stack.selector" (dict "root" $ "name" "rss-notify") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "rss-stack.labels" . | nindent 8 }}
+        app.kubernetes.io/name: rss-notify
+    spec:
+      containers:
+        - name: notify
+          image: {{ include "rss-stack.image" (dict "root" $ "tag" $svc.tag "repository" $svc.repository) }}
+          ports:
+            - containerPort: 3000
+          env:
+            - name: SERVICE_FQDN
+              value: {{ printf "%s:3000" $name | quote }}
+            - name: OTEL_EP
+              value: {{ required "otel.endpoint is required (no default)" .Values.otel.endpoint | quote }}
+            - name: NATS_URL
+              value: {{ include "rss-stack.natsUrl" (dict "root" $ "svc" $svc) | quote }}
+            - name: NOTIFY_NATS_RETRY_BUDGET
+              value: "60s"
+            - name: NOTIFY_MAX_ITEM_AGE
+              value: "2h"
+            {{- range $k, $v := $svc.env }}
+            - name: {{ $k | quote }}
+              value: {{ $v | quote }}
+            {{- end }}
+            {{- range $svc.extraEnv }}
+            - name: {{ .name | quote }}
+              value: {{ .value | quote }}
+            {{- end }}
+          {{- include "rss-stack.probes" . | nindent 10 }}
+          {{- with $svc.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "rss-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/name: rss-notify
+spec:
+  selector:
+    {{- include "rss-stack.selector" (dict "root" $ "name" "rss-notify") | nindent 4 }}
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
