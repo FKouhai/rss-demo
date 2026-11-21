@@ -1,32 +1,24 @@
 {
-  pkgs ? import <nixpkgs> { },
+  pkgs ? (
+    let
+      inherit (builtins) fetchTree fromJSON readFile;
+      inherit ((fromJSON (readFile ../flake.lock)).nodes) nixpkgs;
+    in
+    import (fetchTree nixpkgs.locked) { }
+  ),
+  go ? pkgs.go,
   shellHook ? "",
   enabledPackages ? [ ],
   devHelp ? null,
 }:
-let
-  install_astro = pkgs.writeShellApplication {
-    name = "install_astro";
-    runtimeInputs = [ pkgs.nodejs ];
-    text = ''
-      npm create astro@latest
-    '';
-  };
-
-  run_dev = pkgs.writeShellApplication {
-    name = "run_dev";
-    runtimeInputs = [ pkgs.nodejs ];
-    text = ''
-      npm run dev
-    '';
-  };
-in
 pkgs.mkShell {
   inherit shellHook;
-  buildInputs = [
-    install_astro
-    pkgs.nodejs
-    run_dev
+  packages = [
+    go
+    # C compiler so `go test -race` works under `nix develop`.
+    pkgs.gcc
+    pkgs.templ
+    pkgs.tailwindcss
   ]
   ++ pkgs.lib.optional (devHelp != null) devHelp
   ++ enabledPackages;

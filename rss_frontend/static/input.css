@@ -1,0 +1,386 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root,
+[data-theme="light"] {
+  --paper: #faf7f0;
+  --ink: #1a1714;
+  --muted: #6b6259;
+  --rule: #1a1714;
+  --accent: #8c2f12;
+  --card: #fffdf8;
+  --line: #e2ddd2;
+}
+
+[data-theme="dark"] {
+  --paper: #141210;
+  --ink: #ece5d8;
+  --muted: #a89e8d;
+  --rule: #ece5d8;
+  --accent: #e0784a;
+  --card: #1d1a17;
+  --line: #35302a;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    margin: 0;
+  }
+  a {
+    color: inherit;
+  }
+  code {
+    font-size: 0.85em;
+  }
+}
+
+.paper {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 0 1rem 3rem;
+}
+
+.masthead {
+  text-align: center;
+  border-bottom: 3px double var(--rule);
+  padding: 0.75rem 0 0.5rem;
+  margin-bottom: 1.25rem;
+}
+
+.dateline {
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.nameplate {
+  font-family: Georgia, Charter, "Times New Roman", serif;
+  font-weight: 900;
+  font-size: clamp(2rem, 6vw, 3.5rem);
+  margin: 0.1em 0 0;
+  letter-spacing: -0.01em;
+}
+
+.nameplate a {
+  text-decoration: none;
+}
+
+.tagline {
+  font-style: italic;
+  color: var(--muted);
+  margin: 0 0 0.5rem;
+  font-size: 0.9rem;
+}
+
+.navrow {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  justify-content: center;
+  border-top: 1px solid var(--line);
+  padding-top: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.navlink {
+  text-decoration: none;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.navlink:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.navspacer {
+  flex: 1;
+}
+
+.navuser {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.themebtn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.sectionhead {
+  font-family: Georgia, Charter, serif;
+  font-size: 1.6rem;
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 0.25rem;
+}
+
+.subhead {
+  font-family: Georgia, Charter, serif;
+  font-size: 1.1rem;
+}
+
+.toolbar {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.toolbar input[type="search"],
+.toolbar select {
+  background: var(--card);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  padding: 0.4rem 0.6rem;
+  font-size: 0.9rem;
+}
+
+.toolbar input[type="search"] {
+  flex: 1;
+  min-width: 12rem;
+}
+
+.resultline {
+  font-size: 0.85rem;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 0.4rem;
+}
+
+.frontgrid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0;
+}
+
+.story {
+  padding: 0.8rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.story.is-read .headline {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.headline {
+  font-family: Georgia, Charter, serif;
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1.3;
+  text-decoration: none;
+}
+
+.headline:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.byline {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-top: 0.2rem;
+}
+
+.pager {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 0;
+}
+
+.pager a {
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.pager a:hover {
+  color: var(--accent);
+}
+
+.empty {
+  padding: 2rem 0;
+  text-align: center;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.kicker {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  margin-bottom: 0;
+}
+
+.reader-head {
+  font-family: Georgia, Charter, serif;
+  font-size: clamp(1.6rem, 4vw, 2.4rem);
+  line-height: 1.15;
+  margin: 0.2em 0 0.3em;
+}
+
+.reader figure {
+  margin: 1rem 0;
+}
+
+.reader img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  filter: none;
+}
+
+[data-theme="dark"] .reader img {
+  filter: brightness(0.92);
+}
+
+.articlebody {
+  font-family: Georgia, Charter, serif;
+  font-size: 1.08rem;
+  line-height: 1.7;
+  max-width: 42rem;
+}
+
+.articlebody.dropcap > p:first-of-type::first-letter {
+  font-size: 3.2em;
+  float: left;
+  line-height: 0.9;
+  padding-right: 0.08em;
+  font-weight: 700;
+}
+
+.articlebody h1,
+.articlebody h2,
+.articlebody h3 {
+  line-height: 1.25;
+}
+
+.articlebody a {
+  color: var(--accent);
+}
+
+.articlebody blockquote {
+  border-left: 3px solid var(--accent);
+  margin-left: 0;
+  padding-left: 1rem;
+  font-style: italic;
+}
+
+.articlebody pre,
+.articlebody code {
+  font-size: 0.85em;
+}
+
+.articlebody pre {
+  overflow-x: auto;
+  background: var(--card);
+  border: 1px solid var(--line);
+  padding: 0.75rem;
+}
+
+.sourceline {
+  margin-top: 1.5rem;
+  font-size: 0.9rem;
+}
+
+.btn {
+  display: inline-block;
+  border: 1px solid var(--rule);
+  padding: 0.5rem 1rem;
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.btn:hover {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.notice {
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  background: var(--card);
+  padding: 0.75rem 1rem;
+  margin: 1rem 0;
+}
+
+.ledger {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.ledger th,
+.ledger td {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.ledger thead th {
+  border-bottom: 2px solid var(--rule);
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.1rem 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border: 1px solid var(--rule);
+}
+
+.badge.ok {
+  background: #1d4d1d;
+  color: #e8f5e8;
+  border-color: #1d4d1d;
+}
+
+[data-theme="light"] .badge.ok {
+  background: #e2efe2;
+  color: #1d4d1d;
+}
+
+.badge.bad {
+  background: #6d1a1a;
+  color: #f8e8e8;
+  border-color: #6d1a1a;
+}
+
+[data-theme="light"] .badge.bad {
+  background: #f5e0e0;
+  color: #6d1a1a;
+}
+
+.colophon {
+  margin-top: 2rem;
+  border-top: 3px double var(--rule);
+  padding-top: 0.5rem;
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--muted);
+}

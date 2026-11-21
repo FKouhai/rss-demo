@@ -1,0 +1,55 @@
+package views
+
+import "time"
+
+// ServiceStatus is one row of the status dashboard.
+type ServiceStatus struct {
+	Name    string
+	Healthy bool
+	Error   string
+}
+
+// StatusParams carries the dashboard.
+type StatusParams struct {
+	Title       string
+	User        string
+	AuthEnabled bool
+	Services    []ServiceStatus
+	Updated     time.Time
+}
+
+templ Status(p StatusParams) {
+	@shell(PageParams{Title: p.Title, User: p.User, AuthEnabled: p.AuthEnabled}) {
+		<h2 class="sectionhead">Service status</h2>
+		@StatusTable(p.Services)
+		<p class="muted">Updated { p.Updated.Format("15:04:05") } · refreshes every 30s</p>
+	}
+}
+
+templ StatusTable(services []ServiceStatus) {
+	<div
+		id="status-table"
+		hx-get="/partials/status"
+		hx-trigger="every 30s"
+		hx-swap="outerHTML"
+	>
+		<table class="ledger">
+			<thead><tr><th>Service</th><th>State</th><th>Note</th></tr></thead>
+			<tbody>
+				for _, s := range services {
+					<tr>
+						<td><code>{ s.Name }</code></td>
+						<td>
+							if s.Healthy {
+								<span class="badge ok">Operational</span>
+							} else {
+								<span class="badge bad">Degraded</span>
+							}
+						</td>
+						<td class="muted">{ s.Error }</td>
+					</tr>
+				}
+			</tbody>
+		</table>
+	</div>
+}

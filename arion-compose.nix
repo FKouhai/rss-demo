@@ -22,6 +22,17 @@ _: {
       ];
     };
 
+    rss_outbox.service = {
+      image = "rss_outbox:latest";
+      environment = {
+        OTEL_EP = "jaeger:4317";
+        SERVICE_FQDN = "rss_outbox:3000";
+        NATS_URL = "nats://nats:4222";
+        OUTBOX_DB_DRIVER = "sqlite";
+        OUTBOX_DB_DSN = "/var/lib/rss-outbox/outbox.db";
+      };
+    };
+
     rss_notify.service = {
       image = "rss_notify:latest";
       ports = [
@@ -29,8 +40,8 @@ _: {
       ];
       environment = {
         OTEL_EP = "jaeger:4317";
-        LOCATOR_URL = "http://rss_locator:3000";
         SERVICE_FQDN = "rss_notify:3000";
+        NATS_URL = "nats://nats:4222";
       };
     };
 
@@ -44,9 +55,8 @@ _: {
       ];
       environment = {
         OTEL_EP = "jaeger:4317";
-        NOTIFICATION_ENDPOINT = "https://discord.com/api/webhooks/1421594472923267084/207qADiqkjML0Vllr8SX9kF0hgN3piPRxx8pb4tcODcgn-W8VoIVNELfWo7-rTkPlj99";
-        LOCATOR_URL = "http://rss_locator:3000";
         SERVICE_FQDN = "rss_poller:3000";
+        NATS_URL = "nats://nats:4222";
       };
     };
 
@@ -57,17 +67,7 @@ _: {
       ];
       environment = {
         OTEL_EP = "jaeger:4317";
-        LOCATOR_URL = "http://rss_locator:3000";
-      };
-    };
-
-    rss_locator.service = {
-      image = "rss_locator:latest";
-      ports = [
-        "3002:3000"
-      ];
-      environment = {
-        OTEL_EP = "jaeger:4317";
+        SERVICE_FQDN = "rss_frontend:3000";
       };
     };
 

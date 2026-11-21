@@ -4,7 +4,7 @@ schema = 4
 
 [workspace]
   go = "1.27.4"
-  modules = [".", "./rss_notify", "./rss_outbox", "./rss_poller"]
+  modules = [".", "./rss_frontend", "./rss_notify", "./rss_outbox", "./rss_poller"]
 
 [mod]
   [mod."filippo.io/edwards25519"]
@@ -22,11 +22,20 @@ schema = 4
     hash = "sha256-TMoje93q9Rk+zEW78R+SmKew9qCVussko0w8GPnYy5c="
     go = "1.25.0"
     packages = ["github.com/PuerkitoBio/goquery"]
+  [mod."github.com/a-h/templ"]
+    version = "v0.3.960"
+    hash = "sha256-44Gls5C8pxOV6wpglwV7O7Twh3A7bUilBxXqQa77gLg="
+    go = "1.23.0"
+    packages = ["github.com/a-h/templ", "github.com/a-h/templ/runtime", "github.com/a-h/templ/safehtml"]
   [mod."github.com/andybalholm/cascadia"]
     version = "v1.3.3"
     hash = "sha256-jv7ZshpSd7FZzKKN6hqlUgiR8C3y85zNIS/hq7g76Ho="
     go = "1.16"
     packages = ["github.com/andybalholm/cascadia"]
+  [mod."github.com/aymerick/douceur"]
+    version = "v0.2.0"
+    hash = "sha256-NiBX8EfOvLXNiK3pJaZX4N73YgfzdrzRXdiBFe3X3sE="
+    packages = ["github.com/aymerick/douceur/css", "github.com/aymerick/douceur/parser"]
   [mod."github.com/cenkalti/backoff/v5"]
     version = "v5.0.3"
     hash = "sha256-bKq43PPD8RM6e7HePxHaO27traqm76bkvHcTVTQ+jeY="
@@ -60,7 +69,6 @@ schema = 4
     hash = "sha256-MKoJKXup1jfwOyN8mHXu1CQ8fvFJTaEf3K2LVtNSRhc="
     go = "1.24.0"
     packages = ["github.com/go-jose/go-jose/v4", "github.com/go-jose/go-jose/v4/cipher", "github.com/go-jose/go-jose/v4/json"]
-    implicit = true
   [mod."github.com/go-logr/logr"]
     version = "v1.4.3"
     hash = "sha256-Nnp/dEVNMxLp3RSPDHZzGbI8BkSNuZMX0I0cjWKXXLA="
@@ -80,6 +88,11 @@ schema = 4
     version = "v1.6.0"
     hash = "sha256-VWl9sqUzdOuhW0KzQlv0gwwUQClYkmZwSydHG2sALYw="
     packages = ["github.com/google/uuid"]
+  [mod."github.com/gorilla/css"]
+    version = "v1.0.1"
+    hash = "sha256-6JwNHqlY2NpZ0pSQTyYPSpiNqjXOdFHqrUT10sv3y8A="
+    go = "1.20"
+    packages = ["github.com/gorilla/css/scanner"]
   [mod."github.com/grpc-ecosystem/grpc-gateway/v2"]
     version = "v2.28.0"
     hash = "sha256-QeWb6jN6noeGPCzECgpUSb9YX9LzvKGwImEuX+A03gs="
@@ -105,6 +118,11 @@ schema = 4
     hash = "sha256-qhw9hWtU5wnyFyuMbKx+7RB8ckQaFQ8D+8GKPkN3HHQ="
     go = "1.15"
     packages = ["github.com/mattn/go-isatty"]
+  [mod."github.com/microcosm-cc/bluemonday"]
+    version = "v1.0.27"
+    hash = "sha256-EZSya9FLPQ83CL7N2cZy21fdS35hViTkiMK5f3op8Es="
+    go = "1.19"
+    packages = ["github.com/microcosm-cc/bluemonday", "github.com/microcosm-cc/bluemonday/css"]
   [mod."github.com/mmcdole/gofeed"]
     version = "v1.3.0"
     hash = "sha256-GHpqGZvNg+3RSIkVKXrWg6/e8dJD8Y5v2Sx6MzmRlQ0="
@@ -211,7 +229,6 @@ schema = 4
     hash = "sha256-TWcccM4d5t0ZbDyHXEm4elxKk5uzlo29i85lVHSZcNw="
     go = "1.25.0"
     packages = ["golang.org/x/crypto/blake2b", "golang.org/x/crypto/curve25519", "golang.org/x/crypto/internal/alias", "golang.org/x/crypto/internal/poly1305", "golang.org/x/crypto/nacl/box", "golang.org/x/crypto/nacl/secretbox", "golang.org/x/crypto/salsa20/salsa"]
-    implicit = true
   [mod."golang.org/x/net"]
     version = "v0.56.0"
     hash = "sha256-JUORjxDZqZanYWo2yunaDpQ2/zvHiFb0TnF1Jw6D+30="
