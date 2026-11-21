@@ -9,9 +9,12 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"sync/atomic"
+	"time"
 
 	log "github.com/FKouhai/rss-demo/libs/logger"
 	"github.com/FKouhai/rss-demo/libs/pubsub"
@@ -24,15 +27,20 @@ import (
 // integration tests construct it directly.
 type Config struct {
 	service.BaseConfig
-	NATSURL  string
-	DBDriver store.Driver
-	DBDSN    string
+	NATSURL string
+	// NATSRetryBudget bounds startup reconnect retries (compose sets it;
+	// tests leave it 0 for an instant degraded boot). Exhaustion boots
+	// degraded with /ready held at 503.
+	NATSRetryBudget time.Duration
+	DBDriver        store.Driver
+	DBDSN           string
 }
 
 // App is a running outbox instance. Close it with Shutdown.
 type App struct {
 	service.BaseApp
 	nc     *pubsub.Client
+	wired  atomic.Bool
 	store  store.Store
 	outbox *Outbox
 }
@@ -60,7 +68,7 @@ func Run(ctx context.Context, cfg Config) (*App, error) {
 	}
 	app.Boot = boot
 
-	client, err := pubsub.NewClient(cfg.NATSURL, pubsub.RssOptions{ServiceName: "outbox"})
+	client, err := pubsub.DialWithRetry(ctx, cfg.NATSURL, pubsub.RssOptions{ServiceName: "outbox"}, cfg.NATSRetryBudget)
 	if err != nil {
 		log.ErrorFmt("Failed to connect to NATS at %s: %v", cfg.NATSURL, err)
 	} else {
@@ -88,11 +96,23 @@ func Run(ctx context.Context, cfg Config) (*App, error) {
 			return nil, fmt.Errorf("outbox start: %w", err)
 		}
 		app.outbox = ob
+		app.wired.Store(true)
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", handlers.HealthzHandler)
-	mux.HandleFunc("/ready", handlers.ReadyHandler)
+	// Readiness means wired: HTTP serving alone is not enough for a
+	// NATS-backed service. K8s readiness probes hold the pod out of
+	// endpoints until subscriptions are established.
+	mux.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
+		if !app.wired.Load() {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "not ready", "reason": "nats unavailable"})
+			return
+		}
+		handlers.ReadyHandler(w, r)
+	})
 	mux.HandleFunc("/outbox/status", handlers.OutboxStatusHandler)
 
 	srv, err := service.ServeHTTP(cfg.HTTPAddr, mux, "rss_outbox")

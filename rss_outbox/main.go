@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	log "github.com/FKouhai/rss-demo/libs/logger"
 	"github.com/FKouhai/rss-outbox/cmd"
 	"github.com/FKouhai/rss-outbox/store"
 	_ "github.com/go-sql-driver/mysql"
@@ -27,12 +28,16 @@ func main() {
 		HTTPAddr:    envOr("OUTBOX_HTTP_ADDR", ":3000"),
 		SkipTracer:  os.Getenv("OUTBOX_SKIP_TRACER") == "1",
 		NATSURL:     os.Getenv("NATS_URL"),
-		DBDriver:    store.Driver(os.Getenv("OUTBOX_DB_DRIVER")),
-		DBDSN:       os.Getenv("OUTBOX_DB_DSN"),
+		// Local/compose: give the broker time to appear (DNS + boot).
+		// Tests leave it unset for an instant degraded boot.
+		NATSRetryBudget: envDuration("OUTBOX_NATS_RETRY_BUDGET", 0),
+		DBDriver:        store.Driver(os.Getenv("OUTBOX_DB_DRIVER")),
+		DBDSN:           os.Getenv("OUTBOX_DB_DSN"),
 	}
 
 	app, err := cmd.Run(ctx, cfg)
 	if err != nil {
+		log.ErrorFmt("run: %v", err)
 		os.Exit(1)
 	}
 
@@ -48,6 +53,15 @@ func main() {
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return def
+}
+
+func envDuration(key string, def time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
 	}
 	return def
 }
