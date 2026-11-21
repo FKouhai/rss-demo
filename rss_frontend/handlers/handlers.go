@@ -9,10 +9,15 @@ import (
 	"time"
 
 	"github.com/FKouhai/rss-demo/libs/auth/oidc"
+	"github.com/FKouhai/rss-demo/libs/instrumentation"
 	log "github.com/FKouhai/rss-demo/libs/logger"
 	"github.com/FKouhai/rss-frontend/internal/extract"
 	"github.com/FKouhai/rss-frontend/views"
+	"go.opentelemetry.io/otel/trace"
 )
+
+// tracer is the service-scoped helper for frontend spans.
+var tracer = instrumentation.ForService("frontend")
 
 // ExtractorFunc fetches an article for the reader view. It is a field
 // (not a direct call) so tests can stub the network.
@@ -91,11 +96,12 @@ func pageParams(r *http.Request) (q, feed string, page, perPage int) {
 	return q, feed, page, perPage
 }
 
-// renderErr logs template write errors. By the time Render fails the
-// status line is committed, so there is nothing useful left to send.
-func renderErr(err error) {
+// renderErr records template write errors on the caller's span. By the
+// time Render fails the status line is committed, so the trace is the
+// only place the failure surfaces.
+func renderErr(span trace.Span, err error) {
 	if err != nil {
-		log.ErrorFmt("render: %v", err)
+		instrumentation.Fail(span, err, "render: %v", err)
 	}
 }
 
@@ -105,14 +111,15 @@ func (d Deps) frontHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q, feed, page, perPage := pageParams(r)
-	ctx := r.Context()
+	ctx, span := tracer.StartServer(r.Context(), "handlers.frontHandler")
+	defer span.End()
 	items, total, aggOK := d.listGraceful(ctx, q, feed, perPage, (page-1)*perPage)
 	var feeds []string
 	if aggOK {
 		feeds, _ = d.Items.Feeds(ctx)
 	}
 	user := userLabel(r)
-	renderErr(views.Front(views.FrontParams{
+	renderErr(span, views.Front(views.FrontParams{
 		Title: "The RSS Gazette", User: user, AuthEnabled: d.AuthEnabled,
 		Items: items, Total: total, Q: q, Feed: feed, Feeds: feeds,
 		Page: page, PerPage: perPage, AggOK: aggOK,
@@ -121,9 +128,10 @@ func (d Deps) frontHandler(w http.ResponseWriter, r *http.Request) {
 
 func (d Deps) itemsPartial(w http.ResponseWriter, r *http.Request) {
 	q, feed, page, perPage := pageParams(r)
-	ctx := r.Context()
+	ctx, span := tracer.StartServer(r.Context(), "handlers.itemsPartial")
+	defer span.End()
 	items, total, aggOK := d.listGraceful(ctx, q, feed, perPage, (page-1)*perPage)
-	renderErr(views.ItemsList(views.FrontParams{
+	renderErr(span, views.ItemsList(views.FrontParams{
 		Items: items, Total: total, Q: q, Feed: feed,
 		Page: page, PerPage: perPage, AggOK: aggOK,
 	}).Render(ctx, w))
@@ -141,14 +149,15 @@ func (d Deps) listGraceful(ctx context.Context, q, feed string, limit, offset in
 }
 
 func (d Deps) articleHandler(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+	ctx, span := tracer.StartServer(r.Context(), "handlers.articleHandler")
+	defer span.End()
 	item, err := d.Items.Get(ctx, r.PathValue("id"))
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			http.NotFound(w, r)
 			return
 		}
-		log.ErrorFmt("aggregator get: %v", err)
+		instrumentation.Fail(span, err, "aggregator get: %v", err)
 		http.Error(w, "aggregator unavailable", http.StatusBadGateway)
 		return
 	}
@@ -156,7 +165,7 @@ func (d Deps) articleHandler(w http.ResponseWriter, r *http.Request) {
 	if fetchErr != nil {
 		log.ErrorFmt("extract %s: %v", item.Link, fetchErr)
 	}
-	renderErr(views.Article(views.ArticleParams{
+	renderErr(span, views.Article(views.ArticleParams{
 		Title: item.Title, User: userLabel(r), AuthEnabled: d.AuthEnabled,
 		Item: item, Article: article,
 		FetchErr: fetchErr != nil,
@@ -164,20 +173,23 @@ func (d Deps) articleHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d Deps) configHandler(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+	ctx, span := tracer.StartServer(r.Context(), "handlers.configHandler")
+	defer span.End()
 	feeds, err := d.Items.Feeds(ctx)
 	aggOK := err == nil
 	if err != nil {
 		log.ErrorFmt("aggregator feeds: %v", err)
 		feeds = nil
 	}
-	renderErr(views.Config(views.ConfigParams{
+	renderErr(span, views.Config(views.ConfigParams{
 		Title: "Configure", User: userLabel(r), AuthEnabled: d.AuthEnabled,
 		Feeds: feeds, AggOK: aggOK,
 	}).Render(ctx, w))
 }
 
 func (d Deps) imgHandler(w http.ResponseWriter, r *http.Request) {
+	_, span := tracer.StartServer(r.Context(), "handlers.imgHandler")
+	defer span.End()
 	raw := r.URL.Query().Get("url")
 	if raw == "" {
 		http.Error(w, "missing url", http.StatusBadRequest)
@@ -192,7 +204,7 @@ func (d Deps) imgHandler(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	body, ct, err := extract.FetchBytes(ctx, raw, 5<<20, "image/")
 	if err != nil {
-		log.ErrorFmt("img %s: %v", raw, err)
+		instrumentation.Fail(span, err, "img %s: %v", raw, err)
 		http.Error(w, "fetch failed", http.StatusBadGateway)
 		return
 	}

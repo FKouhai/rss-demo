@@ -58,13 +58,17 @@ func (d Deps) probeAll() []ServiceStatus {
 }
 
 func (d Deps) statusHandler(w http.ResponseWriter, r *http.Request) {
+	_, span := tracer.StartServer(r.Context(), "handlers.statusHandler")
+	defer span.End()
 	st := d.probeAll()
-	renderErr(views.Status(views.StatusParams{
+	renderErr(span, views.Status(views.StatusParams{
 		Title: "Status", User: userLabel(r), AuthEnabled: d.AuthEnabled,
 		Services: st, Updated: time.Now(),
 	}).Render(r.Context(), w))
 }
 
 func (d Deps) statusPartial(w http.ResponseWriter, r *http.Request) {
-	renderErr(views.StatusTable(d.probeAll()).Render(r.Context(), w))
+	_, span := tracer.StartServer(r.Context(), "handlers.statusPartial")
+	defer span.End()
+	renderErr(span, views.StatusTable(d.probeAll()).Render(r.Context(), w))
 }
