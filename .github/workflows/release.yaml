@@ -25,6 +25,7 @@ jobs:
           - rss-notify
           - rss-outbox
           - rss-aggregator
+          - rss-config
           - rss-frontend
         config:
           - { system: x86_64-linux, runner: ubuntu-latest }
