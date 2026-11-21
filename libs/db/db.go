@@ -10,7 +10,10 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 // Driver is a supported SQL backend.
@@ -24,9 +27,28 @@ const (
 
 // Open connects to dsn and runs schema as migrate-on-start DDL, returning
 // a ready *sql.DB. Callers own the schema (usually go:embed'ed next to
-// their dialect constructor).
+// their dialect constructor). For file-backed sqlite DSNs the parent
+// directory is created as needed, so services can point at paths (e.g.
+// /var/lib/<svc>/app.db) that don't exist in minimal container images.
+// Sqlite gets a single pooled connection: these services are low-write
+// and concurrent writers otherwise hit SQLITE_BUSY, whose redelivery
+// fallout (exhausted MaxDeliver → rows stuck pending forever) is far
+// worse than serialized access.
 func Open(d Driver, dsn, schema string) (*sql.DB, error) {
+	if d == DriverSQLite && dsn != ":memory:" && !strings.Contains(dsn, "?") {
+		if dir := filepath.Dir(dsn); dir != "" && dir != "." {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return nil, fmt.Errorf("%s mkdir %s: %w", d, dir, err)
+			}
+		}
+	}
 	conn, err := sql.Open(string(d), dsn)
+	if err != nil {
+		return nil, fmt.Errorf("%s open: %w", d, err)
+	}
+	if d == DriverSQLite {
+		conn.SetMaxOpenConns(1)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("%s open: %w", d, err)
 	}

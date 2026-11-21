@@ -19,6 +19,11 @@ const (
 
 	// StatusFailed message failed to be delivered
 	StatusFailed Status = "failed"
+
+	// StatusSkipped delivery was intentionally not attempted (e.g.
+	// notify's max-age gate on cold-start backlog). Terminal like
+	// delivered; the reason travels in AckReply.Error.
+	StatusSkipped Status = "skipped"
 )
 
 // RSSItem represents the shape of an rss entry
@@ -39,6 +44,12 @@ type DeliveryMessage struct {
 	FeedURL    string `json:"feed_url"`
 	Title      string `json:"title"`
 	Link       string `json:"link"`
+	// PublishedAt is the feed's own date for the item (RFC3339 when the
+	// feed provides a parseable date, else the raw value). Notify's
+	// max-age gate reads this: stale backlog never posts. Unparseable
+	// or empty values fail open as fresh — a missed post is worse
+	// than a stale one.
+	PublishedAt string `json:"published_at"`
 }
 
 // AckReply fields for ACK replies on services
