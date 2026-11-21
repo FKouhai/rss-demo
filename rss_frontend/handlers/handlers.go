@@ -34,6 +34,14 @@ type Deps struct {
 	OutboxURL     string
 	PollerURL     string
 	NotifyURL     string
+	// ConfigURL is the rss_config base URL (empty = Configure page
+	// falls back to the aggregator list, previous behavior).
+	ConfigURL string
+	// ConfigSecret is the gateway secret forwarded to rss_config.
+	ConfigSecret string
+	// AdminGroups lists the OIDC groups allowed to mutate config
+	// (CONFIG_ADMIN_GROUPS, default "admin").
+	AdminGroups []string
 }
 
 // Register mounts all routes. Everything except health/readiness,
@@ -57,6 +65,9 @@ func Register(mux *http.ServeMux, d Deps) {
 	mux.Handle("GET /status", guard(http.HandlerFunc(d.statusHandler)))
 	mux.Handle("GET /partials/status", guard(http.HandlerFunc(d.statusPartial)))
 	mux.Handle("GET /config", guard(http.HandlerFunc(d.configHandler)))
+	mux.Handle("POST /config/feeds", guard(http.HandlerFunc(d.configAddHandler)))
+	mux.Handle("DELETE /config/feeds", guard(http.HandlerFunc(d.configDeleteHandler)))
+	mux.Handle("POST /config/default-webhook", guard(http.HandlerFunc(d.configDefaultHandler)))
 	mux.Handle("GET /img", guard(http.HandlerFunc(d.imgHandler)))
 
 	if d.AuthEnabled && d.OIDC != nil {
@@ -169,21 +180,6 @@ func (d Deps) articleHandler(w http.ResponseWriter, r *http.Request) {
 		Title: item.Title, User: userLabel(r), AuthEnabled: d.AuthEnabled,
 		Item: item, Article: article,
 		FetchErr: fetchErr != nil,
-	}).Render(ctx, w))
-}
-
-func (d Deps) configHandler(w http.ResponseWriter, r *http.Request) {
-	ctx, span := tracer.StartServer(r.Context(), "handlers.configHandler")
-	defer span.End()
-	feeds, err := d.Items.Feeds(ctx)
-	aggOK := err == nil
-	if err != nil {
-		log.ErrorFmt("aggregator feeds: %v", err)
-		feeds = nil
-	}
-	renderErr(span, views.Config(views.ConfigParams{
-		Title: "Configure", User: userLabel(r), AuthEnabled: d.AuthEnabled,
-		Feeds: feeds, AggOK: aggOK,
 	}).Render(ctx, w))
 }
 

@@ -1,37 +1,91 @@
 package views
 
-// ConfigParams carries the configure page.
-type ConfigParams struct {
-	Title       string
-	User        string
-	AuthEnabled bool
-	Feeds       []string
-	AggOK       bool
-}
-
 templ Config(p ConfigParams) {
 	@shell(PageParams{Title: p.Title, User: p.User, AuthEnabled: p.AuthEnabled}) {
 		<h2 class="sectionhead">Configure</h2>
-		<div class="notice">
-			<p>Feed management moves to the <code>rss_config</code> service (pending). Feeds below come from the aggregator.</p>
-		</div>
-		if !p.AggOK {
+		if !p.ConfigOK {
 			<div class="notice">
-				<p>Aggregator unreachable — no feeds to show.</p>
+				<p>Config service unreachable — showing feeds observed by the aggregator (read-only).</p>
 			</div>
-		}
-		<h3 class="subhead">Feeds in store ({ itoa(len(p.Feeds)) })</h3>
-		if len(p.Feeds) == 0 {
-			<p class="muted">No feeds observed yet.</p>
+			if !p.AggOK {
+				<div class="notice">
+					<p>Aggregator unreachable too — no feeds to show.</p>
+				</div>
+			}
+			<h3 class="subhead">Feeds in store ({ itoa(len(p.Feeds)) })</h3>
+			if len(p.Feeds) == 0 {
+				<p class="muted">No feeds observed yet.</p>
+			} else {
+				<table class="ledger">
+					<thead><tr><th>Feed</th></tr></thead>
+					<tbody>
+						for _, f := range p.Feeds {
+							<tr><td><code>{ f }</code></td></tr>
+						}
+					</tbody>
+				</table>
+			}
 		} else {
-			<table class="ledger">
-				<thead><tr><th>Feed</th></tr></thead>
-				<tbody>
-					for _, f := range p.Feeds {
-						<tr><td><code>{ f }</code></td></tr>
-					}
-				</tbody>
-			</table>
+			<div class="notice">
+				<p>Managed by the <code>rss_config</code> service — the poller polls this list. The default webhook applies where a feed sets no override.</p>
+			</div>
+			<h3 class="subhead">Default webhook</h3>
+			if p.IsAdmin {
+				<form class="formrow" hx-post="/config/default-webhook" hx-target="#config-feeds" hx-swap="outerHTML">
+					<input class="field" type="url" name="webhook_url" value={ p.DefaultWebhook } placeholder="https://discord.com/api/webhooks/…" size="48"/>
+					<button class="btn" type="submit">Save default</button>
+				</form>
+			} else {
+				if p.DefaultWebhook == "" {
+					<p class="muted">No default set.</p>
+				} else {
+					<p><code>{ p.DefaultWebhook }</code></p>
+				}
+			}
+			<h3 class="subhead">Feeds in config ({ itoa(len(p.ConfigFeeds)) })</h3>
+			@ConfigTable(p)
+			if p.IsAdmin {
+				<h3 class="subhead">Add feed</h3>
+				<form class="formrow" hx-post="/config/feeds" hx-target="#config-feeds" hx-swap="outerHTML">
+					<input class="field" type="url" name="url" placeholder="https://example.com/feed.xml" required size="40"/>
+					<input class="field" type="url" name="webhook_url" placeholder="override webhook (optional)" size="40"/>
+					<button class="btn" type="submit">Add</button>
+				</form>
+			}
 		}
 	}
+}
+
+// ConfigTable is the managed feed list, re-rendered after every mutation.
+templ ConfigTable(p ConfigParams) {
+	<div id="config-feeds">
+		<table class="ledger">
+			<thead><tr><th>Feed</th><th>Webhook override</th><th></th></tr></thead>
+			<tbody>
+				for _, f := range p.ConfigFeeds {
+					<tr>
+						<td><code>{ f.URL }</code></td>
+						<td>
+							if f.WebhookURL == "" {
+								<span class="muted">default</span>
+							} else {
+								<code>{ f.WebhookURL }</code>
+							}
+						</td>
+						<td>
+							if p.IsAdmin {
+								<button
+									class="btn danger"
+									hx-delete={ "/config/feeds?url=" + f.URL }
+									hx-target="#config-feeds"
+									hx-swap="outerHTML"
+									hx-confirm={ "Remove " + f.URL + "?" }
+								>Remove</button>
+							}
+						</td>
+					</tr>
+				}
+			</tbody>
+		</table>
+	</div>
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -31,6 +32,9 @@ func main() {
 		OIDCClientSec: os.Getenv("OIDC_CLIENT_SECRET"),
 		OIDCRedirect:  os.Getenv("OIDC_REDIRECT_URL"),
 		SessionKeyB64: os.Getenv("AUTH_SESSION_KEY"),
+		ConfigURL:     envOr("CONFIG_URL", "http://rss_config:3000"),
+		ConfigSecret:  os.Getenv("CONFIG_GATEWAY_SECRET"),
+		AdminGroups:   envList("CONFIG_ADMIN_GROUPS", "admin"),
 	}
 
 	app, err := cmd.Run(ctx, cfg)
@@ -52,4 +56,19 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// envList splits a comma-separated env var; empty means the default.
+func envList(key, def string) []string {
+	v := os.Getenv(key)
+	if v == "" {
+		v = def
+	}
+	var out []string
+	for s := range strings.SplitSeq(v, ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }

@@ -39,6 +39,11 @@ type Config struct {
 	OIDCClientSec string
 	OIDCRedirect  string
 	SessionKeyB64 string
+	// Config service wiring (Configure page). Empty ConfigURL keeps
+	// the aggregator fallback; empty secret is open mode.
+	ConfigURL    string
+	ConfigSecret string
+	AdminGroups  []string
 }
 
 // App is a running frontend instance. Close it with Shutdown.
@@ -65,6 +70,9 @@ func Run(ctx context.Context, cfg Config) (*App, error) {
 	cfg.OutboxURL = defaultURL(cfg.OutboxURL, "http://rss_outbox:3000")
 	cfg.PollerURL = defaultURL(cfg.PollerURL, "http://rss_poller:3000")
 	cfg.NotifyURL = defaultURL(cfg.NotifyURL, "http://rss_notify:3000")
+	if len(cfg.AdminGroups) == 0 {
+		cfg.AdminGroups = []string{"admin"}
+	}
 
 	app := &App{}
 
@@ -113,6 +121,9 @@ func Run(ctx context.Context, cfg Config) (*App, error) {
 		OutboxURL:     cfg.OutboxURL,
 		PollerURL:     cfg.PollerURL,
 		NotifyURL:     cfg.NotifyURL,
+		ConfigURL:     cfg.ConfigURL,
+		ConfigSecret:  cfg.ConfigSecret,
+		AdminGroups:   cfg.AdminGroups,
 	}
 
 	mux := http.NewServeMux()
