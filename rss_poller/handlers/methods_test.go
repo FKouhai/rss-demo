@@ -439,3 +439,33 @@ func TestUserAgentTransport_PreservesExplicit(t *testing.T) {
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestPrimeSeen_MarksWithoutPublishing(t *testing.T) {
+	seenMu.Lock()
+	old := seen
+	seen = make(map[string]bool)
+	seenMu.Unlock()
+	t.Cleanup(func() {
+		seenMu.Lock()
+		seen = old
+		seenMu.Unlock()
+	})
+
+	cands := []unseenItem{{key: "a"}, {key: "b"}, {key: "c"}}
+	if n := primeSeen(cands); n != 3 {
+		t.Fatalf("primeSeen = %d, want 3", n)
+	}
+	seenMu.Lock()
+	defer seenMu.Unlock()
+	for _, k := range []string{"a", "b", "c"} {
+		if !seen[k] {
+			t.Errorf("key %q not marked seen", k)
+		}
+	}
+}
+
+func TestPrimeSeen_Empty(t *testing.T) {
+	if n := primeSeen(nil); n != 0 {
+		t.Fatalf("primeSeen(nil) = %d, want 0", n)
+	}
+}

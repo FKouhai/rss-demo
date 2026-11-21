@@ -32,6 +32,13 @@ type Config struct {
 	// tests leave it 0 for an instant degraded boot). Exhaustion boots
 	// degraded with /ready held at 503.
 	NATSRetryBudget time.Duration
+	// ConfigURL is the rss_config base URL (e.g. http://rss_config:3000).
+	// Empty disables service polling: the file is the only source.
+	// ConfigSecret is the gateway secret for config (empty = open mode).
+	// ConfigPollInterval bounds the refresh loop (default 60s).
+	ConfigURL          string
+	ConfigSecret       string
+	ConfigPollInterval time.Duration
 }
 
 // App is a running poller instance. Close it with Shutdown.
@@ -74,6 +81,9 @@ func Run(ctx context.Context, cfg Config) (*App, error) {
 
 	// Load persisted config on startup; starts polling immediately if feeds are found.
 	handlers.LoadConfig(ctx)
+	// Service config overlays the file: same shape, polled, last-good
+	// kept while config is unreachable.
+	handlers.StartConfigPoll(cfg.ConfigURL, cfg.ConfigSecret, cfg.ConfigPollInterval)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", handlers.HealthzHandler)
@@ -105,6 +115,7 @@ func (a *App) NATS() *pubsub.Client { return a.nc }
 
 // Shutdown stops all components and returns the joined error.
 func (a *App) Shutdown(ctx context.Context) error {
+	handlers.StopConfigPoll()
 	var errs []error
 	if a.nc != nil {
 		a.nc.Close()

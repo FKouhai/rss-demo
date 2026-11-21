@@ -26,6 +26,12 @@ func main() {
 		// Local/compose: give the broker time to appear (DNS + boot).
 		// Tests leave it unset for an instant degraded boot.
 		NATSRetryBudget: envDuration("POLLER_NATS_RETRY_BUDGET", 0),
+		// Config service: the poller's source of truth (file stays as
+		// boot seed + unreachable fallback). Tests leave it unset
+		// (file-only mode).
+		ConfigURL:          envOr("CONFIG_URL", "http://rss_config:3000"),
+		ConfigSecret:       os.Getenv("CONFIG_GATEWAY_SECRET"),
+		ConfigPollInterval: envDuration("CONFIG_POLL_INTERVAL", time.Minute),
 	}
 
 	app, err := cmd.Run(ctx, cfg)
