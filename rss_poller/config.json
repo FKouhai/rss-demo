@@ -1,7 +1,8 @@
 {
   "rss_feeds": [
     "https://feeds.arstechnica.com/arstechnica/index",
-    "https://www.reddit.com/r/kubernetes/.rss",
+    "https://hnrss.org/newest?comments=250",
+    "https://old.reddit.com/r/kubernetes/.rss",
     "https://determinate.systems/rss.xml"
   ]
 }

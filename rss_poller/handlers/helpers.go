@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"sort"
 	"sync"
 	"time"
 
@@ -22,18 +23,42 @@ import (
 
 var sharedHTTPClient = &http.Client{
 	Timeout: 10 * time.Second,
-	Transport: otelhttp.NewTransport(&http.Transport{
+	Transport: otelhttp.NewTransport(&userAgentTransport{rt: &http.Transport{
 		MaxIdleConns:        20,
 		MaxIdleConnsPerHost: 5,
 		IdleConnTimeout:     90 * time.Second,
 		DisableCompression:  false,
-	}),
+	}}),
+}
+
+// userAgentTransport stamps a descriptive User-Agent on outbound feed
+// fetches. Hosts with bot mitigation (notably Reddit: 429 on the default
+// Go UA) need an identifying agent before they serve anything at all.
+type userAgentTransport struct {
+	rt http.RoundTripper
+}
+
+func (t *userAgentTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.Header.Get("User-Agent") == "" {
+		clone := r.Clone(r.Context())
+		clone.Header.Set("User-Agent", "rss-demo-poller/1.0 (+homelab rss reader)")
+		r = clone
+	}
+	return t.rt.RoundTrip(r)
 }
 
 var (
 	seenMu sync.Mutex
 	seen   = make(map[string]bool)
 )
+
+// maxItemsPerCycle bounds how many items one tick publishes. Cold starts
+// (or long outages) surface the full backlog as unseen; without a cap a
+// single tick fans out into hundreds of downstream spans and one
+// unreadable trace. The remainder stays unseen and drains over the next
+// ticks. Duplicates need no handling here: NATS MsgId dedup plus the
+// content-hash primary key downstream already drop replays.
+const maxItemsPerCycle = 5
 
 var (
 	natsClient *pubsub.Client
@@ -212,35 +237,55 @@ func publishedAt(it *gofeed.Item) string {
 	return it.Published
 }
 
-// collectNewItems scans feeds and returns entries not yet present in the seen
-// map, recording each newly encountered key into seen. Items with empty links
-// are skipped. The GUID (or Link when no GUID) is used as the dedup key.
-// A child span is created so the dedup step is visible inside the PollAndNotify trace.
-func collectNewItems(ctx context.Context, feeds []parsedFeed) []feedItem {
+// unseenItem pairs a candidate with its dedup key so the caller can
+// decide what to publish before anything is marked seen. Marking only
+// published items is what lets selectBatch defer the overflow to later
+// ticks instead of dropping it.
+type unseenItem struct {
+	key  string
+	item feedItem
+}
+
+// collectUnseen scans feeds and returns entries not yet present in the
+// seen map, without marking anything. Items with empty links are
+// skipped. The GUID (or Link when no GUID) is used as the dedup key.
+// A child span is created so the dedup step is visible inside the
+// PollCycle trace.
+func collectUnseen(ctx context.Context, feeds []parsedFeed) []unseenItem {
 	_, span := tracer.Start(ctx, "helper.collectNewItems")
 	defer span.End()
 
-	var items []feedItem
+	var items []unseenItem
 	seenMu.Lock()
 	defer seenMu.Unlock()
+	// inCycle dedupes repeats within this scan (same item listed under
+	// several feeds). Global seen is only written by markSeen, after the
+	// caller decides what to publish.
+	inCycle := make(map[string]bool)
 	for _, pf := range feeds {
 		if pf.Feed == nil {
 			continue
 		}
 		for _, it := range pf.Feed.Items {
 			k := itemKey(it)
-			if k == "" || seen[k] {
+			if k == "" || seen[k] || inCycle[k] {
 				continue
 			}
-			seen[k] = true
 			if it.Link == "" {
+				// Record-but-skip, as before: unpublishable, so eager
+				// marking can't interact with batch selection.
+				seen[k] = true
 				continue
 			}
-			items = append(items, feedItem{
-				FeedURL:     pf.URL,
-				Title:       it.Title,
-				Link:        it.Link,
-				PublishedAt: publishedAt(it),
+			inCycle[k] = true
+			items = append(items, unseenItem{
+				key: k,
+				item: feedItem{
+					FeedURL:     pf.URL,
+					Title:       it.Title,
+					Link:        it.Link,
+					PublishedAt: publishedAt(it),
+				},
 			})
 		}
 	}
@@ -248,12 +293,52 @@ func collectNewItems(ctx context.Context, feeds []parsedFeed) []feedItem {
 	return items
 }
 
-// pollAndNotify contains the core logic for a single polling cycle: parse,
+// markSeen records keys as seen. Call only for items actually published;
+// everything else stays unseen for the next tick.
+func markSeen(keys ...string) {
+	seenMu.Lock()
+	defer seenMu.Unlock()
+	for _, k := range keys {
+		seen[k] = true
+	}
+}
+
+// selectBatch returns up to n candidates, newest-first by PublishedAt.
+// PublishedAt is RFC3339 (see publishedAt), so lexicographic order is
+// chronological. Items with unparseable dates may misorder, but the cap
+// still bounds the burst and the remainder drains on later ticks.
+func selectBatch(candidates []unseenItem, n int) []unseenItem {
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return candidates[i].item.PublishedAt > candidates[j].item.PublishedAt
+	})
+	if len(candidates) > n {
+		candidates = candidates[:n]
+	}
+	return candidates
+}
+
+// collectNewItems scans feeds and returns entries not yet present in the seen
+// map, recording each newly encountered key into seen. Items with empty links
+// are skipped. The GUID (or Link when no GUID) is used as the dedup key.
+// A child span is created so the dedup step is visible inside the PollCycle trace.
+func collectNewItems(ctx context.Context, feeds []parsedFeed) []feedItem {
+	items := collectUnseen(ctx, feeds)
+	keys := make([]string, 0, len(items))
+	out := make([]feedItem, 0, len(items))
+	for _, u := range items {
+		keys = append(keys, u.key)
+		out = append(out, u.item)
+	}
+	markSeen(keys...)
+	return out
+}
+
+// pollCycle contains the core logic for a single polling cycle: parse,
 // dedupe, and publish each new item to feeds.new.
-func pollAndNotify(t time.Time) {
+func pollCycle(t time.Time) {
 	log.InfoFmt("Poller ticker: tick at %v", t)
 
-	cycleCtx, cycleSpan := tracer.Start(context.Background(), "poller.PollAndNotify")
+	cycleCtx, cycleSpan := tracer.Start(context.Background(), "poller.PollCycle")
 	// Always end the cycle span when this function returns so the span
 	// lifecycle is deterministic and never leaks.
 	defer cycleSpan.End()
@@ -272,29 +357,48 @@ func pollAndNotify(t time.Time) {
 		return
 	}
 
-	// Deduplicate: collectNewItems is a child span of PollAndNotify.
-	items := collectNewItems(cycleCtx, feeds)
-	cycleSpan.SetAttributes(attribute.Int("new.items", len(items)))
+	// Deduplicate: collectUnseen is a child span of PollCycle. The
+	// batch is capped so cold starts drain over several ticks instead
+	// of one mega-fan-out; only published items are marked seen.
+	candidates := collectUnseen(cycleCtx, feeds)
+	cycleSpan.SetAttributes(attribute.Int("new.items", len(candidates)))
+	batch := selectBatch(candidates, maxItemsPerCycle)
+	cycleSpan.SetAttributes(attribute.Int("published.items", len(batch)))
+	var published []string
+	for _, u := range batch {
+		published = append(published, u.key)
+	}
+	markSeen(published...)
 
-	for _, it := range items {
-		dm := pubsub.RSSItem{
-			FeedURL:     it.FeedURL,
-			Title:       it.Title,
-			Link:        it.Link,
-			PublishedAt: it.PublishedAt,
-			WebhookURL:  resolveWebhook(it.FeedURL, snapshot),
-		}
-		payload, err := json.Marshal(dm)
-		if err != nil {
-			cycleSpan.RecordError(err)
-			log.ErrorFmtCtx(cycleCtx, "failed to marshal item %s: %v", it.Link, err)
-			continue
-		}
-		if _, err := nc.Publish(cycleCtx, pubsub.SubjectFeedsNew, payload, dm.MsgID()); err != nil {
-			cycleSpan.RecordError(err)
-			log.ErrorFmtCtx(cycleCtx, "failed to publish item %s: %v", it.Link, err)
-			continue
-		}
+	for _, u := range batch {
+		// Fresh root trace per item: the cycle span only counts, it
+		// doesn't parent. One item's journey stays one readable
+		// trace instead of all landing in a single PollCycle
+		// monster with hundreds of spans.
+		itemCtx, itemSpan := tracer.Start(context.Background(), "poller.PublishItem")
+		itemSpan.SetAttributes(
+			attribute.String("feed.url", u.item.FeedURL),
+			attribute.String("item.link", u.item.Link),
+		)
+		func() {
+			defer itemSpan.End()
+			dm := pubsub.RSSItem{
+				FeedURL:     u.item.FeedURL,
+				Title:       u.item.Title,
+				Link:        u.item.Link,
+				PublishedAt: u.item.PublishedAt,
+				WebhookURL:  resolveWebhook(u.item.FeedURL, snapshot),
+			}
+			payload, err := json.Marshal(dm)
+			if err != nil {
+				instrumentation.Fail(itemSpan, err, "failed to marshal item %s: %v", u.item.Link, err)
+				return
+			}
+			if _, err := nc.Publish(itemCtx, pubsub.SubjectFeedsNew, payload, dm.MsgID()); err != nil {
+				instrumentation.Fail(itemSpan, err, "failed to publish item %s: %v", u.item.Link, err)
+				return
+			}
+		}()
 	}
 }
 
@@ -324,7 +428,7 @@ func startPolling() {
 				localTicker.Stop()
 				return
 			case t := <-localTicker.C:
-				pollAndNotify(t)
+				pollCycle(t)
 			}
 		}
 	}()

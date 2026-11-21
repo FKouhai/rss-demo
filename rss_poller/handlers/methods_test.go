@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -227,6 +228,42 @@ func TestCollectNewItems(t *testing.T) {
 		}
 	})
 }
+
+func TestSelectBatch(t *testing.T) {
+	mk := func(id, publishedAt string) unseenItem {
+		return unseenItem{key: id, item: feedItem{FeedURL: "f", Title: "t" + id, Link: "l" + id, PublishedAt: publishedAt}}
+	}
+	// PublishedAt zero value sorts last (RFC3339 lexicographic order).
+	cands := []unseenItem{
+		mk("old", "2024-01-01T00:00:00Z"),
+		mk("new", "2026-11-21T00:00:00Z"),
+		mk("mid", "2025-06-01T00:00:00Z"),
+		mk("zero", ""),
+	}
+	got := selectBatch(cands, 2)
+	if len(got) != 2 || got[0].key != "new" || got[1].key != "mid" {
+		t.Errorf("want newest 2 [new mid], got %v", idsOf(got))
+	}
+
+	// n larger than the input returns everything, newest-first.
+	got = selectBatch(cands, 10)
+	if len(got) != 4 || got[3].key != "zero" {
+		t.Errorf("want all 4 newest-first with zero last, got %v", idsOf(got))
+	}
+
+	// Empty input stays empty.
+	if got := selectBatch(nil, 5); len(got) != 0 {
+		t.Errorf("want empty, got %v", got)
+	}
+}
+
+func idsOf(items []unseenItem) []string {
+	out := make([]string, 0, len(items))
+	for _, u := range items {
+		out = append(out, u.key)
+	}
+	return out
+}
 func TestConfigFilePath(t *testing.T) {
 	t.Run("Default", func(t *testing.T) {
 		t.Setenv("CONFIG_FILE", "")
@@ -271,13 +308,13 @@ func TestParseRSSAllFeedsFail(t *testing.T) {
 	}
 }
 
-func TestPollAndNotifyNoNATS(t *testing.T) {
+func TestPollCycleNoNATS(t *testing.T) {
 	// Without a NATS connection the cycle is a no-op: nothing parsed, nothing seen.
 	SetNATSClient(nil)
 	seen = make(map[string]bool)
 	t.Cleanup(func() { seen = make(map[string]bool) })
 
-	pollAndNotify(time.Now())
+	pollCycle(time.Now())
 
 	if len(seen) != 0 {
 		t.Errorf("expected empty seen when NATS is down, got %d entries", len(seen))
@@ -366,3 +403,39 @@ func TestFeedURLs(t *testing.T) {
 		t.Errorf("feedURLs = %v, want %v (deduped, order kept)", got, want)
 	}
 }
+
+func TestUserAgentTransport_SetsDefault(t *testing.T) {
+	var gotUA string
+	stub := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		gotUA = r.Header.Get("User-Agent")
+		return &http.Response{StatusCode: http.StatusOK}, nil
+	})
+	req := httptest.NewRequest(http.MethodGet, "https://example.com/feed", nil)
+	req.Header.Del("User-Agent")
+	if _, err := (&userAgentTransport{rt: stub}).RoundTrip(req); err != nil {
+		t.Fatalf("RoundTrip: %v", err)
+	}
+	if gotUA == "" || strings.HasPrefix(gotUA, "Go-http-client") {
+		t.Errorf("User-Agent = %q, want identifying agent", gotUA)
+	}
+}
+
+func TestUserAgentTransport_PreservesExplicit(t *testing.T) {
+	var gotUA string
+	stub := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		gotUA = r.Header.Get("User-Agent")
+		return &http.Response{StatusCode: http.StatusOK}, nil
+	})
+	req := httptest.NewRequest(http.MethodGet, "https://example.com/feed", nil)
+	req.Header.Set("User-Agent", "custom/1.0")
+	if _, err := (&userAgentTransport{rt: stub}).RoundTrip(req); err != nil {
+		t.Fatalf("RoundTrip: %v", err)
+	}
+	if gotUA != "custom/1.0" {
+		t.Errorf("User-Agent = %q, want explicit value preserved", gotUA)
+	}
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

@@ -5,7 +5,7 @@ import (
 	"net/http"
 
 	"github.com/FKouhai/rss-demo/libs/instrumentation"
-	log "github.com/FKouhai/rss-demo/libs/logger"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // tracer is the service-scoped helper for poller spans. It fixes the
@@ -26,10 +26,12 @@ func getConfigSnapshot() ConfigStruct {
 	return ConfigStruct{RSSFeeds: feeds, WebhookURL: cfg.WebhookURL, Feeds: sources}
 }
 
-// writeJSON writes status and JSON-encodes body to w, logging any encoding error.
-func writeJSON(w http.ResponseWriter, status int, body any) {
+// writeJSON writes status and JSON-encodes body to w, recording any
+// encoding error on the caller's span (the status line is already
+// committed, so the trace is the only place the failure surfaces).
+func writeJSON(w http.ResponseWriter, span trace.Span, status int, body any) {
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(body); err != nil {
-		log.ErrorFmt("failed to encode response: %v", err)
+		instrumentation.Fail(span, err, "failed to encode response: %v", err)
 	}
 }

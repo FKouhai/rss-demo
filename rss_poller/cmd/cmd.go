@@ -9,9 +9,12 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"sync/atomic"
+	"time"
 
 	log "github.com/FKouhai/rss-demo/libs/logger"
 	"github.com/FKouhai/rss-demo/libs/pubsub"
@@ -25,12 +28,17 @@ type Config struct {
 	service.BaseConfig
 	// NATSURL is the broker address. Empty means the local default.
 	NATSURL string
+	// NATSRetryBudget bounds startup reconnect retries (compose sets it;
+	// tests leave it 0 for an instant degraded boot). Exhaustion boots
+	// degraded with /ready held at 503.
+	NATSRetryBudget time.Duration
 }
 
 // App is a running poller instance. Close it with Shutdown.
 type App struct {
 	service.BaseApp
-	nc *pubsub.Client
+	nc    *pubsub.Client
+	wired atomic.Bool
 }
 
 // Run starts the poller with the given config and returns once the HTTP
@@ -49,7 +57,7 @@ func Run(ctx context.Context, cfg Config) (*App, error) {
 	app := &App{}
 	app.Boot = boot
 
-	client, err := pubsub.NewClient(cfg.NATSURL, pubsub.RssOptions{ServiceName: "poller"})
+	client, err := pubsub.DialWithRetry(ctx, cfg.NATSURL, pubsub.RssOptions{ServiceName: "poller"}, cfg.NATSRetryBudget)
 	if err != nil {
 		log.ErrorFmt("Failed to connect to NATS at %s: %v", cfg.NATSURL, err)
 	} else {
@@ -61,6 +69,7 @@ func Run(ctx context.Context, cfg Config) (*App, error) {
 		}
 		app.nc = client
 		handlers.SetNATSClient(client)
+		app.wired.Store(true)
 	}
 
 	// Load persisted config on startup; starts polling immediately if feeds are found.
@@ -68,7 +77,18 @@ func Run(ctx context.Context, cfg Config) (*App, error) {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", handlers.HealthzHandler)
-	mux.HandleFunc("/ready", handlers.ReadyHandler)
+	// Readiness means wired: HTTP serving alone is not enough for a
+	// NATS-backed service. K8s readiness probes hold the pod out of
+	// endpoints until the broker is reachable and streams are ensured.
+	mux.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
+		if !app.wired.Load() {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "not ready", "reason": "nats unavailable"})
+			return
+		}
+		handlers.ReadyHandler(w, r)
+	})
 
 	srv, err := service.ServeHTTP(cfg.HTTPAddr, mux, "rss_poller")
 	if err != nil {
