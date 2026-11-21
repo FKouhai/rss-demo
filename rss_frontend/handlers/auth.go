@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 
+	"github.com/FKouhai/rss-demo/libs/instrumentation"
 	log "github.com/FKouhai/rss-demo/libs/logger"
 )
 
@@ -14,15 +15,17 @@ func cookieFlags(r *http.Request) (secure bool) { return r.TLS != nil }
 // loginHandler starts OIDC: persists the PKCE/state bundle in a
 // short-lived cookie and redirects to Pocket-ID (passkeys happen there).
 func (d Deps) loginHandler(w http.ResponseWriter, r *http.Request) {
+	_, span := tracer.StartServer(r.Context(), "handlers.loginHandler")
+	defer span.End()
 	req, err := d.OIDC.AuthURL()
 	if err != nil {
-		log.ErrorFmt("auth url: %v", err)
+		instrumentation.Fail(span, err, "auth url: %v", err)
 		http.Error(w, "login unavailable", http.StatusInternalServerError)
 		return
 	}
 	sealed, err := d.OIDC.SealState(req)
 	if err != nil {
-		log.ErrorFmt("seal state: %v", err)
+		instrumentation.Fail(span, err, "seal state: %v", err)
 		http.Error(w, "login unavailable", http.StatusInternalServerError)
 		return
 	}
@@ -36,6 +39,8 @@ func (d Deps) loginHandler(w http.ResponseWriter, r *http.Request) {
 // callbackHandler completes OIDC: validates state, exchanges the code,
 // seals the session, and lands on the front page.
 func (d Deps) callbackHandler(w http.ResponseWriter, r *http.Request) {
+	_, span := tracer.StartServer(r.Context(), "handlers.callbackHandler")
+	defer span.End()
 	qs := r.URL.Query()
 	if qs.Get("error") != "" {
 		log.ErrorFmt("oidc provider error: %s", qs.Get("error_description"))
@@ -64,7 +69,7 @@ func (d Deps) callbackHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	sealed, err := d.OIDC.Seal(*sess)
 	if err != nil {
-		log.ErrorFmt("seal session: %v", err)
+		instrumentation.Fail(span, err, "seal session: %v", err)
 		http.Error(w, "login failed", http.StatusInternalServerError)
 		return
 	}

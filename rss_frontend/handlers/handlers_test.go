@@ -316,3 +316,34 @@ func TestPages_RequireAuth(t *testing.T) {
 		t.Errorf("hx: code = %d hx-redirect = %q", rr.Code, rr.Header().Get("HX-Redirect"))
 	}
 }
+
+func TestStatic_ETagRevalidation(t *testing.T) {
+	h := staticHandler()
+
+	plain := httptest.NewRequest(http.MethodGet, "/static/app.css", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, plain)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET app.css = %d, want 200", rr.Code)
+	}
+	etag := rr.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("missing ETag on static response")
+	}
+
+	fresh := httptest.NewRequest(http.MethodGet, "/static/app.css", nil)
+	fresh.Header.Set("If-None-Match", etag)
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, fresh)
+	if rr.Code != http.StatusNotModified {
+		t.Errorf("matching If-None-Match = %d, want 304", rr.Code)
+	}
+
+	stale := httptest.NewRequest(http.MethodGet, "/static/app.css", nil)
+	stale.Header.Set("If-None-Match", `"stale"`)
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, stale)
+	if rr.Code != http.StatusOK {
+		t.Errorf("mismatched If-None-Match = %d, want 200", rr.Code)
+	}
+}
