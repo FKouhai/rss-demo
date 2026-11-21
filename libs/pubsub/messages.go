@@ -45,11 +45,14 @@ type DeliveryMessage struct {
 	Title      string `json:"title"`
 	Link       string `json:"link"`
 	// PublishedAt is the feed's own date for the item (RFC3339 when the
-	// feed provides a parseable date, else the raw value). Notify's
-	// max-age gate reads this: stale backlog never posts. Unparseable
-	// or empty values fail open as fresh — a missed post is worse
-	// than a stale one.
+	// feed provides a parseable date, else the raw value). Carried as
+	// metadata only; the recency gate reads IngestedAt.
 	PublishedAt string `json:"published_at"`
+	// IngestedAt is when the outbox first stored the item (RFC3339).
+	// Notify's max-age gate reads this: new-to-us posts even when the
+	// feed date is old; stale backlog never posts. Empty values fail
+	// open as fresh — a missed post is worse than a stale one.
+	IngestedAt string `json:"ingested_at,omitempty"`
 }
 
 // AckReply fields for ACK replies on services
