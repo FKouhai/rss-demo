@@ -1,53 +1,49 @@
 {
-  pkgs ? import <nixpkgs> { },
-  buildNpmPackage ? pkgs.buildNpmPackage,
-  # On Darwin, pass pkgs.pkgsCross.aarch64-multiplatform so the container gets
-  # a linux/aarch64 node binary. On Linux this defaults to pkgs (native).
-  linuxPkgs ? pkgs,
+  pkgs ? (
+    let
+      inherit (builtins) fetchTree fromJSON readFile;
+      inherit ((fromJSON (readFile ../flake.lock)).nodes) nixpkgs;
+    in
+    import (fetchTree nixpkgs.locked) { }
+  ),
+  buildGoWorkspace ? pkgs.buildGoWorkspace,
+  go ? pkgs.go,
+  tailwindcss ? pkgs.tailwindcss,
   nix2containerPkg ? null,
 }:
 let
-  package = buildNpmPackage {
-    pname = "rss-frontend";
-    version = "0.1.0";
-    src = ./.;
-    npmDepsHash = "sha256-AsxSdFc+UTOBnTM2WQVRfz1aUk/cVIi/kwNbQLZ8PP4=";
-    NODE_OPTIONS = "--openssl-legacy-provider";
-    buildPhase = ''
-      runHook preBuild
-      npm run build
-      runHook postBuild
-    '';
-    installPhase = ''
-      mkdir -p $out/dist
-      cp -r dist/* $out/dist
-      mkdir -p $out/node_modules
-      cp -r node_modules/* $out/node_modules
-      cp instrumentation.cjs $out/instrumentation.cjs
-      cp package.json $out/package.json
-    '';
-  };
+  package = buildGoWorkspace (
+    {
+      pname = "rss-frontend";
+      version = "0.1.0";
+      src = ../.;
+      modules = ../govendor.toml;
+      inherit go;
+      subPackages = [ "rss_frontend" ];
+      doCheck = false;
+      # Compile the newspaper stylesheet before go:embed picks it up.
+      preBuild = ''
+        cd rss_frontend
+        ${tailwindcss}/bin/tailwindcss -i static/input.css -o static/app.css --minify
+        cd ..
+      '';
+    }
+    // pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
+      GOOS = "linux";
+      GOARCH = "arm64";
+      CGO_ENABLED = "0";
+    }
+  );
 
   dockerImage = nix2containerPkg.buildImage {
     name = "rss_frontend";
     tag = "latest";
     config = {
-      cmd = [
-        "${linuxPkgs.nodejs}/bin/node"
-        "--require"
-        "${package}/instrumentation.cjs"
-        "${package}/dist/server/entry.mjs"
-      ];
-      Env = [ "SSL_CERT_FILE=${linuxPkgs.cacert}/etc/ssl/certs/ca-bundle.crt" ];
+      cmd = [ "${package}/bin/rss-frontend" ];
+      Env = [ "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt" ];
     };
     layers = [
-      (nix2containerPkg.buildLayer {
-        deps = [
-          linuxPkgs.nodejs
-          linuxPkgs.cacert
-          linuxPkgs.openssl
-        ];
-      })
+      (nix2containerPkg.buildLayer { deps = [ pkgs.cacert ]; })
       (nix2containerPkg.buildLayer { deps = [ package ]; })
     ];
   };

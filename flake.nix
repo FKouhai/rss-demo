@@ -37,6 +37,9 @@
           inherit system;
           overlays = [
             go-overlay.overlays.default
+            # Local go-overlay workspace fix (see nix/go-overlay/overlay.nix).
+            # Delete when upstream fixes purpleclay/go-overlay#719.
+            (import ./nix/go-overlay/overlay.nix { goOverlaySrc = go-overlay.outPath; })
           ];
         };
 
@@ -150,14 +153,14 @@
                 name = "${nixName}-test";
                 value = mkGoTest {
                   name = nixName;
-                  src = ./. + "/${n}";
+                  dir = n;
                 };
               }
               {
                 name = "${nixName}-lint";
                 value = mkGoLint {
                   name = nixName;
-                  src = ./. + "/${n}";
+                  dir = n;
                 };
               }
             ]

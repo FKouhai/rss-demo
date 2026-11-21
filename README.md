@@ -10,20 +10,21 @@
 
 ## Overview
 
-This repository contains the source code for the microservices responsible for handling RSS notifications, polling, service discovery, and serving the frontend. The services are written in Go, Rust, and Astro, and built with Nix using a consolidated monorepo flake.
+This repository contains the source code for the microservices responsible for handling RSS notifications, polling, durable delivery, and serving the frontend. The services are written in Go and Astro, communicate over NATS JetStream, and are built with Nix using a consolidated monorepo flake.
 
 ## Services
 
 | Service | Language | Description |
 |---------|----------|-------------|
-| [rss_poller](./rss_poller) | Go | Periodically polls RSS feeds to check for updates |
-| [rss_notify](./rss_notify) | Go | Handles sending notifications for RSS feeds |
-| [rss_locator](./rss_locator) | Rust | Service registry for microservice discovery |
+| [rss_poller](./rss_poller) | Go | Periodically polls RSS feeds, publishes new items to NATS |
+| [rss_outbox](./rss_outbox) | Go | Durable delivery outbox: persists items, dispatches notifications, tracks delivery |
+| [rss_notify](./rss_notify) | Go | Sends notifications for RSS feeds to webhook destinations (Discord, Slack) |
 | [rss_frontend](./rss_frontend) | Astro | User interface for interacting with RSS services |
 
 ## Technologies Used
 
-- **Programming Languages**: Go, Rust, JavaScript (Astro)
+- **Programming Languages**: Go, JavaScript (Astro)
+- **Messaging**: NATS JetStream (subjects + durable consumers per service)
 - **Build System**: Nix (consolidated monorepo flake)
 - **Containerization**: Docker (Nix-built layered images)
 - **Orchestration**: Arion (docker-compose via Nix)
@@ -46,16 +47,14 @@ nix develop
 # Go services
 nix develop .#rss_poller
 nix develop .#rss_notify
-
-# Rust service
-nix develop .#rss_locator
+nix develop .#rss_outbox
 
 # Node.js/Astro frontend
 nix develop .#rss_frontend
 ```
 
 Each shell includes:
-- Language-specific tooling (Go, Rust/Cargo, or Node.js/npm)
+- Language-specific tooling (Go or Node.js/npm)
 - Service-specific nix build commands
 - Pre-commit hooks
 - Commands to switch between shells
@@ -68,7 +67,7 @@ Build individual services or all at once from the repository root:
 # Build individual services
 nix build .#rss-poller
 nix build .#rss-notify
-nix build .#rss-locator
+nix build .#rss-outbox
 nix build .#rss-frontend
 
 # Build all services
@@ -83,13 +82,13 @@ Build Docker images for deployment:
 # Build container images
 nix build .#rss-poller-docker
 nix build .#rss-notify-docker
-nix build .#rss-locator-docker
+nix build .#rss-outbox-docker
 nix build .#rss-frontend-docker
 
 # Build and load into local Docker daemon
 nix run .#rss-poller-docker
 nix run .#rss-notify-docker
-nix run .#rss-locator-docker
+nix run .#rss-outbox-docker
 nix run .#rss-frontend-docker
 
 # Build and load ALL images
@@ -135,4 +134,4 @@ arion down
 | Frontend | http://localhost:4321 |
 | Poller API | http://localhost:3000 |
 | Notify Service | http://localhost:3001 |
-| Locator Service | http://localhost:3002 |
+| NATS monitoring | http://localhost:8222 |

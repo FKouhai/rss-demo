@@ -28,6 +28,7 @@ type Config struct {
 	Scopes        []string // default ["openid","email","profile","groups"]
 	SessionKey    []byte   // AUTH_SESSION_KEY (base64 32B) — AES-GCM for the cookie
 	SessionCookie string   // default "__Host-session"
+	StateCookie   string   // default "__Host-oauth-state" (short-lived PKCE bundle)
 	LoginPath     string   // default "/auth/login"
 }
 
@@ -69,6 +70,9 @@ func (c *Config) WithDefaults() {
 	}
 	if c.SessionCookie == "" {
 		c.SessionCookie = "__Host-session"
+	}
+	if c.StateCookie == "" {
+		c.StateCookie = "__Host-oauth-state"
 	}
 	if c.LoginPath == "" {
 		c.LoginPath = "/auth/login"
@@ -118,6 +122,20 @@ func NewClient(ctx context.Context, cfg Config) (*Client, error) {
 			Scopes:       cfg.Scopes,
 		},
 	}, nil
+}
+
+// SessionCookieName is the login session cookie name.
+func (c *Client) SessionCookieName() string {
+	cfg := c.cfg
+	cfg.WithDefaults()
+	return cfg.SessionCookie
+}
+
+// StateCookieName is the short-lived PKCE/state cookie name.
+func (c *Client) StateCookieName() string {
+	cfg := c.cfg
+	cfg.WithDefaults()
+	return cfg.StateCookie
 }
 
 // SessionMiddleware shared session middleware

@@ -1,0 +1,71 @@
+package views
+
+// PageParams carries the layout chrome.
+type PageParams struct {
+	Title       string
+	User        string
+	AuthEnabled bool
+}
+
+templ shell(p PageParams) {
+	<!DOCTYPE html>
+	<html lang="en" data-theme="light">
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<title>{ p.Title } — The RSS Gazette</title>
+			<link rel="icon" type="image/svg+xml" href="/static/favicon.svg"/>
+			<link rel="stylesheet" href="/static/app.css"/>
+			<script>
+				(function(){try{var t=localStorage.getItem("rss-theme");if(!t){t=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";}document.documentElement.setAttribute("data-theme",t);}catch(e){}})();
+			</script>
+			<script src="/static/js/htmx.min.js" defer></script>
+			<script src="/static/js/alpine.min.js" defer></script>
+		</head>
+		<body>
+			<div class="paper">
+				<header class="masthead">
+					<div class="dateline"><span id="dateline">{ dateline() }</span></div>
+					<h1 class="nameplate"><a href="/">The RSS Gazette</a></h1>
+					<p class="tagline">All the news that fits the queue</p>
+					<nav class="navrow">
+						<a href="/" class="navlink">Front Page</a>
+						<a href="/config" class="navlink">Configure</a>
+						<a href="/status" class="navlink">Status</a>
+						<span class="navspacer"></span>
+						if p.AuthEnabled {
+							if p.User != "" {
+								<span class="navuser">{ p.User }</span>
+								<a href="/auth/logout" class="navlink">Log out</a>
+							} else {
+								<a href="/auth/login" class="navlink">Log in</a>
+							}
+						}
+						<button
+							class="navlink themebtn"
+							x-data
+							@click="(function(){var h=document.documentElement;var n=h.getAttribute('data-theme')==='dark'?'light':'dark';h.setAttribute('data-theme',n);try{localStorage.setItem('rss-theme',n);}catch(e){}})()"
+						>◐ theme</button>
+					</nav>
+				</header>
+				<main>
+					{ children... }
+				</main>
+				<footer class="colophon">
+					<span>Served fresh from NATS JetStream</span>
+				</footer>
+			</div>
+			<script>
+				document.getElementById("dateline").textContent = new Date().toLocaleDateString(undefined, {weekday:"long", year:"numeric", month:"long", day:"numeric"});
+				window.rssRead = {
+					key: "rss-read-items",
+					list: function(){ try { return JSON.parse(localStorage.getItem(this.key) || "[]"); } catch(e){ return []; } },
+					has: function(id){ return this.list().indexOf(id) !== -1; },
+					mark: function(id){ var l = this.list(); if (l.indexOf(id) === -1) { l.push(id); try { localStorage.setItem(this.key, JSON.stringify(l.slice(-2000))); } catch(e){} } }
+				};
+			</script>
+		</body>
+	</html>
+}
+
+func dateline() string { return "" }

@@ -1,0 +1,50 @@
+package views
+
+import "github.com/FKouhai/rss-frontend/internal/extract"
+
+// ArticleParams carries the reader view.
+type ArticleParams struct {
+	Title       string
+	User        string
+	AuthEnabled bool
+	Item        Item
+	Article     extract.Article
+	FetchErr    bool
+}
+
+templ Article(p ArticleParams) {
+	@shell(PageParams{Title: p.Title, User: p.User, AuthEnabled: p.AuthEnabled}) {
+		<article class="reader">
+			<p class="kicker">{ p.Item.FeedURL }</p>
+			<h1 class="reader-head">{ p.Item.Title }</h1>
+			<div class="byline">
+				if p.Article.SiteName != "" {
+					<span>{ p.Article.SiteName }</span>
+					<span aria-hidden="true"> · </span>
+				}
+				<span>{ DomainOf(p.Item.Link) }</span>
+				if p.Item.PublishedAt != "" {
+					<span aria-hidden="true"> · </span>
+					<span>{ p.Item.PublishedAt }</span>
+				}
+			</div>
+			if p.Article.LeadImage != "" {
+				<figure>
+					<img src={ p.Article.LeadImage } alt="" loading="lazy"/>
+				</figure>
+			}
+			if p.FetchErr {
+				<div class="notice">
+					<p>Could not fetch the full text — the source may block readers.</p>
+					<p><a class="btn" href={ templ.URL(p.Item.Link) }>Read on the source site →</a></p>
+				</div>
+			} else {
+				<div class="articlebody dropcap">
+					@templ.Raw(p.Article.HTML)
+				</div>
+				<p class="sourceline"><a href={ templ.URL(p.Item.Link) }>Read on the source site →</a></p>
+			}
+			<p><a href="/">← Front page</a></p>
+		</article>
+	}
+}

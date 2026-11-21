@@ -1,0 +1,185 @@
+package views
+
+// Item is one feed row for the front page. The shape is the aggregator's
+// API contract (GET /api/items); the frontend only renders it.
+type Item struct {
+	ID          string
+	FeedURL     string
+	Title       string
+	Link        string
+	PublishedAt string
+}
+
+// FrontParams carries front-page state.
+type FrontParams struct {
+	Title       string
+	User        string
+	AuthEnabled bool
+	Items       []Item
+	Total       int
+	Q           string
+	Feed        string
+	Feeds       []string
+	Page        int
+	PerPage     int
+	AggOK       bool
+}
+
+templ Front(p FrontParams) {
+	@shell(PageParams{Title: p.Title, User: p.User, AuthEnabled: p.AuthEnabled}) {
+		<form
+			class="toolbar"
+			hx-get="/partials/items"
+			hx-target="#feed-list"
+			hx-swap="outerHTML"
+			hx-push-url="true"
+			hx-trigger="submit, change from:select"
+		>
+			<input
+				type="search"
+				name="q"
+				value={ p.Q }
+				placeholder="Search headlines…"
+				hx-get="/partials/items"
+				hx-target="#feed-list"
+				hx-swap="outerHTML"
+				hx-push-url="true"
+				hx-trigger="keyup changed delay:300ms"
+				hx-include="[name='feed'],[name='per_page']"
+			/>
+			<select name="feed">
+				<option value="">All feeds</option>
+				for _, f := range p.Feeds {
+					if f == p.Feed {
+						<option value={ f } selected>{ DomainOf(f) }</option>
+					} else {
+						<option value={ f }>{ DomainOf(f) }</option>
+					}
+				}
+			</select>
+			<select name="per_page">
+				if p.PerPage == 16 {
+					<option value="16" selected>16 / page</option>
+				} else {
+					<option value="16">16 / page</option>
+				}
+				if p.PerPage == 32 {
+					<option value="32" selected>32 / page</option>
+				} else {
+					<option value="32">32 / page</option>
+				}
+				if p.PerPage == 64 {
+					<option value="64" selected>64 / page</option>
+				} else {
+					<option value="64">64 / page</option>
+				}
+			</select>
+			<noscript><button type="submit">Search</button></noscript>
+		</form>
+		@ItemsList(p)
+	}
+}
+
+templ ItemsList(p FrontParams) {
+	<div
+		id="feed-list"
+		hx-get={ ItemsURL(p.Q, p.Feed, p.Page, p.PerPage) }
+		hx-trigger="every 120s"
+		hx-swap="outerHTML"
+	>
+		<p class="resultline">{ resultLine(p.Total, p.Q) }</p>
+		if !p.AggOK {
+			<div class="notice">
+				<p>Aggregator unreachable — showing nothing rather than stale news. New stories appear once <code>rss_aggregator</code> is serving.</p>
+			</div>
+		}
+		if len(p.Items) == 0 && p.AggOK {
+			<div class="empty">
+				<p>No stories yet.</p>
+				<p class="muted">The poller publishes to <code>feeds.new</code>; items appear here as they arrive.</p>
+			</div>
+		} else {
+			<ol class="frontgrid">
+				for _, it := range p.Items {
+					<li
+						class="story"
+						x-data={ "{rd: rssRead.has('" + it.ID + "')}" }
+						:class="rd && 'is-read'"
+					>
+						<a
+							class="headline"
+							href={ templ.URL("/items/" + it.ID) }
+							@click={ "rssRead.mark('" + it.ID + "'); rd = true" }
+						>{ it.Title }</a>
+						<div class="byline">
+							<span>{ DomainOf(it.Link) }</span>
+							<span aria-hidden="true"> · </span>
+							<span>{ it.PublishedAt }</span>
+						</div>
+					</li>
+				}
+			</ol>
+			@pager(p)
+		}
+	</div>
+}
+
+templ pager(p FrontParams) {
+	<nav class="pager">
+		if p.Page > 1 {
+			<a
+				href={ templ.URL(FrontURL(p.Q, p.Feed, p.Page-1, p.PerPage)) }
+				hx-get={ ItemsURL(p.Q, p.Feed, p.Page-1, p.PerPage) }
+				hx-target="#feed-list"
+				hx-swap="outerHTML"
+				hx-push-url="true"
+			>← Newer</a>
+		}
+		<span class="muted">Page { itoa(p.Page) } · { itoa(p.Total) } stories</span>
+		if p.Page*p.PerPage < p.Total {
+			<a
+				href={ templ.URL(FrontURL(p.Q, p.Feed, p.Page+1, p.PerPage)) }
+				hx-get={ ItemsURL(p.Q, p.Feed, p.Page+1, p.PerPage) }
+				hx-target="#feed-list"
+				hx-swap="outerHTML"
+				hx-push-url="true"
+			>Older →</a>
+		}
+	</nav>
+}
+
+func resultLine(total int, q string) string {
+	if q == "" {
+		return headlineCount(total)
+	}
+	return headlineCount(total) + " for “" + q + "”"
+}
+
+func headlineCount(total int) string {
+	if total == 1 {
+		return "1 story"
+	}
+	return itoa(total) + " stories"
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	var b [20]byte
+	i := len(b)
+	for n > 0 {
+		i--
+		b[i] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		i--
+		b[i] = '-'
+	}
+	return string(b[i:])
+}

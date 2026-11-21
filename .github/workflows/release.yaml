@@ -23,7 +23,7 @@ jobs:
         service:
           - rss-poller
           - rss-notify
-          - rss-locator
+          - rss-outbox
           - rss-frontend
         config:
           - { system: x86_64-linux, runner: ubuntu-latest }

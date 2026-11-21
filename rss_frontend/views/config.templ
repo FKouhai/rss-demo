@@ -1,0 +1,37 @@
+package views
+
+// ConfigParams carries the configure page.
+type ConfigParams struct {
+	Title       string
+	User        string
+	AuthEnabled bool
+	Feeds       []string
+	AggOK       bool
+}
+
+templ Config(p ConfigParams) {
+	@shell(PageParams{Title: p.Title, User: p.User, AuthEnabled: p.AuthEnabled}) {
+		<h2 class="sectionhead">Configure</h2>
+		<div class="notice">
+			<p>Feed management moves to the <code>rss_config</code> service (pending). Feeds below come from the aggregator.</p>
+		</div>
+		if !p.AggOK {
+			<div class="notice">
+				<p>Aggregator unreachable — no feeds to show.</p>
+			</div>
+		}
+		<h3 class="subhead">Feeds in store ({ itoa(len(p.Feeds)) })</h3>
+		if len(p.Feeds) == 0 {
+			<p class="muted">No feeds observed yet.</p>
+		} else {
+			<table class="ledger">
+				<thead><tr><th>Feed</th></tr></thead>
+				<tbody>
+					for _, f := range p.Feeds {
+						<tr><td><code>{ f }</code></td></tr>
+					}
+				</tbody>
+			</table>
+		}
+	}
+}
