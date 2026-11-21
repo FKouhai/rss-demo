@@ -29,6 +29,10 @@ func main() {
 		HTTPAddr:    envOr("NOTIFY_HTTP_ADDR", ":3000"),
 		SkipTracer:  os.Getenv("NOTIFY_SKIP_TRACER") == "1",
 		NATSURL:     os.Getenv("NATS_URL"),
+		MaxItemAge:  envDuration("NOTIFY_MAX_ITEM_AGE", 2*time.Hour),
+		// Local/compose: give the broker time to appear (DNS + boot).
+		// Tests leave it unset for an instant degraded boot.
+		NATSRetryBudget: envDuration("NOTIFY_NATS_RETRY_BUDGET", 0),
 	}
 
 	app, err := cmd.Run(ctx, cfg)
@@ -48,6 +52,17 @@ func main() {
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return def
+}
+
+// envMaxAge parses a duration env var; empty or unparseable falls back to
+// def so a typo can't silently disable (or zero) the stale gate.
+func envDuration(key string, def time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
 	}
 	return def
 }

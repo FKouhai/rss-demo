@@ -143,9 +143,30 @@ func TestParseDelivery(t *testing.T) {
 }
 
 func TestNotifyStart_NilNATS(t *testing.T) {
-	n := NewNotify(nil)
+	n := NewNotify(nil, 0)
 	if err := n.Start(context.Background()); err == nil {
 		t.Error("expected error for nil NATS client, got nil")
+	}
+}
+
+func TestStaleItem(t *testing.T) {
+	now := time.Date(2026, 11, 21, 20, 0, 0, 0, time.UTC)
+	old := now.Add(-3 * time.Hour).Format(time.RFC3339)
+	fresh := now.Add(-time.Hour).Format(time.RFC3339)
+	if !staleItem(old, 2*time.Hour, now) {
+		t.Error("3h-old item with 2h max should be stale")
+	}
+	if staleItem(fresh, 2*time.Hour, now) {
+		t.Error("1h-old item with 2h max should be fresh")
+	}
+	if staleItem("", 2*time.Hour, now) {
+		t.Error("empty PublishedAt must fail open as fresh")
+	}
+	if staleItem("not a date", 2*time.Hour, now) {
+		t.Error("unparseable PublishedAt must fail open as fresh")
+	}
+	if staleItem(old, 0, now) {
+		t.Error("zero maxAge disables the gate")
 	}
 }
 

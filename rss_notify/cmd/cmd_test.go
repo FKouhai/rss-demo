@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"testing"
@@ -71,5 +72,29 @@ func TestApp_Run_HealthzResponds(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if len(body) == 0 {
 		t.Error("/healthz returned empty body")
+	}
+}
+
+func TestApp_Run_Ready503WhenNATSDown(t *testing.T) {
+	// newTestApp points NATS at an unroutable port: boot degrades and
+	// the readiness gate must hold at 503 instead of reporting ready.
+	app := newTestApp(t)
+	waitForReady(t, app)
+
+	addr := "http://" + app.Addr().String()
+	resp, err := http.Get(addr + "/ready")
+	if err != nil {
+		t.Fatalf("GET /ready: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("/ready status = %d, want 503 while NATS is down", resp.StatusCode)
+	}
+	var body map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode /ready body: %v", err)
+	}
+	if body["status"] != "not ready" {
+		t.Errorf("/ready body = %v, want not-ready status", body)
 	}
 }

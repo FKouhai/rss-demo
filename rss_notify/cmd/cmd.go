@@ -8,9 +8,12 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"sync/atomic"
+	"time"
 
 	log "github.com/FKouhai/rss-demo/libs/logger"
 	"github.com/FKouhai/rss-demo/libs/pubsub"
@@ -18,18 +21,26 @@ import (
 	"github.com/FKouhai/rss-notify/methods"
 )
 
-// Config is the notify bootstrap config shared by all Go services.
-// It is an alias, not a new struct: notify adds no service-specific
-// bootstrap fields, so construction sites stay flat.
+// Config carries notify's env-derived settings. MaxItemAge bounds Discord
+// posts to fresh items (NOTIFY_MAX_ITEM_AGE, e.g. "2h"); older deliveries
+// are acked skipped, never posted.
 type Config struct {
 	service.BaseConfig
 	NATSURL string
+	// MaxItemAge bounds Discord posts to fresh items; older deliveries
+	// are acked skipped, never posted. Zero disables the gate.
+	MaxItemAge time.Duration
+	// NATSRetryBudget bounds startup reconnect retries (compose sets it;
+	// tests leave it 0 for an instant degraded boot). Exhaustion boots
+	// degraded with /ready held at 503.
+	NATSRetryBudget time.Duration
 }
 
 // App is a running notify instance. Close it with Shutdown.
 type App struct {
 	service.BaseApp
 	nc       *pubsub.Client
+	wired    atomic.Bool
 	notifier *Notify
 }
 
@@ -46,7 +57,7 @@ func Run(ctx context.Context, cfg Config) (*App, error) {
 	app := &App{}
 	app.Boot = boot
 
-	client, err := pubsub.NewClient(cfg.NATSURL, pubsub.RssOptions{ServiceName: "notify"})
+	client, err := pubsub.DialWithRetry(ctx, cfg.NATSURL, pubsub.RssOptions{ServiceName: "notify"}, cfg.NATSRetryBudget)
 	if err != nil {
 		log.ErrorFmt("Failed to connect to NATS at %s: %v", cfg.NATSURL, err)
 	} else {
@@ -55,17 +66,29 @@ func Run(ctx context.Context, cfg Config) (*App, error) {
 	}
 
 	if app.nc != nil {
-		noti := NewNotify(app.nc)
+		noti := NewNotify(app.nc, cfg.MaxItemAge)
 		if err := noti.Start(ctx); err != nil {
 			app.shutdown(context.Background())
 			return nil, fmt.Errorf("notify start: %w", err)
 		}
 		app.notifier = noti
+		app.wired.Store(true)
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", methods.HealthzHandler)
-	mux.HandleFunc("/ready", methods.ReadyHandler)
+	// Readiness means wired: HTTP serving alone is not enough for a
+	// NATS-backed service. K8s readiness probes hold the pod out of
+	// endpoints until subscriptions are established.
+	mux.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
+		if !app.wired.Load() {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "not ready", "reason": "nats unavailable"})
+			return
+		}
+		methods.ReadyHandler(w, r)
+	})
 
 	srv, err := service.ServeHTTP(cfg.HTTPAddr, mux, "rss_notify")
 	if err != nil {

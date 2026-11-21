@@ -41,14 +41,19 @@ const (
 var tracer = instrumentation.ForService("notify")
 
 type Notify struct {
-	nc        *pubsub.Client
-	runCtx    context.Context
-	runCancel context.CancelFunc
+	nc *pubsub.Client
+	// maxItemAge bounds Discord posts to fresh items. Anything older is
+	// acked delivered but never posted: the read model already has it,
+	// and cold-start backlogs must not flood the channel. Zero disables
+	// the gate (everything posts).
+	maxItemAge time.Duration
+	runCtx     context.Context
+	runCancel  context.CancelFunc
 }
 
 // NewNotify constructor for Notify struct
-func NewNotify(nc *pubsub.Client) *Notify {
-	return &Notify{nc: nc}
+func NewNotify(nc *pubsub.Client, maxItemAge time.Duration) *Notify {
+	return &Notify{nc: nc, maxItemAge: maxItemAge}
 }
 
 // Start ensures streams + consumer, then runs the fetch loop.
@@ -118,6 +123,20 @@ func (n *Notify) loop(ctx context.Context) {
 	}
 }
 
+// staleItem reports whether a delivery is too old to post. The feed's
+// own date is parsed as RFC3339; empty or unparseable values fail open
+// as fresh — a missed post is worse than a stale one.
+func staleItem(publishedAt string, maxAge time.Duration, now time.Time) bool {
+	if maxAge <= 0 || publishedAt == "" {
+		return false
+	}
+	ts, err := time.Parse(time.RFC3339, publishedAt)
+	if err != nil {
+		return false
+	}
+	return now.Sub(ts) > maxAge
+}
+
 // item pairs a parsed delivery with its NATS message and consumer span.
 type item struct {
 	dm   pubsub.DeliveryMessage
@@ -169,6 +188,7 @@ func (n *Notify) dispatchBatch(ctx context.Context, msgs []jetstream.Msg) {
 
 	groups := make(map[string][]item)
 	var order []string
+	stale := 0
 	for _, m := range msgs {
 		span := consumerSpan(m)
 		dm, ok := parseDelivery(m)
@@ -178,11 +198,22 @@ func (n *Notify) dispatchBatch(ctx context.Context, msgs []jetstream.Msg) {
 			continue
 		}
 		span.SetAttributes(attribute.String("outbox.id", dm.OutboxID))
+		if staleItem(dm.PublishedAt, n.maxItemAge, time.Now()) {
+			// Cold-start backlog: the read model already has it;
+			// posting it would flood the channel with stale news.
+			// Ack skipped (terminal, nothing to retry) with the
+			// reason, and move on.
+			stale++
+			span.SetAttributes(attribute.Bool("notify.stale", true))
+			n.ackDelivery(ctx, item{dm: dm, msg: m, span: span}, pubsub.StatusSkipped, "older than max item age")
+			continue
+		}
 		if _, seen := groups[dm.WebhookURL]; !seen {
 			order = append(order, dm.WebhookURL)
 		}
 		groups[dm.WebhookURL] = append(groups[dm.WebhookURL], item{dm: dm, msg: m, span: span})
 	}
+	batchSpan.SetAttributes(attribute.Int("messages.stale", stale))
 	for _, url := range order {
 		n.flushGroup(ctx, url, groups[url])
 	}
@@ -284,7 +315,17 @@ func (n *Notify) flushGroup(ctx context.Context, webhookURL string, items []item
 		var code int
 		var err error
 		d := webhookpush.DiscordNotification{WebHookURL: webhookURL}
-		code, err = d.SendNotification(ctx, []string{formatBatch(dms)})
+		// Parent the combined POST to the first delivery and link the
+		// rest: one Discord message, one trace, full fan-in visible.
+		grpCtx := ctx
+		var links []trace.Link
+		if len(items) > 0 {
+			grpCtx = trace.ContextWithSpanContext(ctx, items[0].span.SpanContext())
+			for _, it := range items[1:] {
+				links = append(links, trace.Link{SpanContext: it.span.SpanContext()})
+			}
+		}
+		code, err = d.SendNotification(grpCtx, []string{formatBatch(dms)}, links...)
 		status, detail, retry = classifyWebhook(code, err)
 	}
 
