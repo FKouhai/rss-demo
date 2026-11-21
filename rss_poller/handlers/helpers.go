@@ -9,6 +9,7 @@ import (
 	"os"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/FKouhai/rss-demo/libs/instrumentation"
@@ -52,13 +53,32 @@ var (
 	seen   = make(map[string]bool)
 )
 
-// maxItemsPerCycle bounds how many items one tick publishes. Cold starts
-// (or long outages) surface the full backlog as unseen; without a cap a
-// single tick fans out into hundreds of downstream spans and one
-// unreadable trace. The remainder stays unseen and drains over the next
-// ticks. Duplicates need no handling here: NATS MsgId dedup plus the
-// content-hash primary key downstream already drop replays.
+// maxItemsPerCycle bounds how many items one tick publishes. Long
+// outages surface their backlog as unseen; without a cap a single tick
+// fans out into hundreds of downstream spans and one unreadable trace.
+// The remainder stays unseen and drains over the next ticks. Duplicates
+// need no handling here: NATS MsgId dedup plus the content-hash primary
+// key downstream already drop replays.
 const maxItemsPerCycle = 5
+
+// primed tracks whether the poller has completed its first full scan.
+// The first cycle after (re)start only marks everything seen and
+// publishes nothing: the in-memory seen map is empty at boot, so a
+// publishing first tick would re-flood the channel with the full
+// backlog of every feed (observed on every recreate). Items appearing
+// after the prime publish normally.
+var primed atomic.Bool
+
+// primeSeen marks every candidate seen without publishing. First cycle
+// after boot only: restarts go silent instead of replaying history.
+func primeSeen(candidates []unseenItem) int {
+	keys := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		keys = append(keys, c.key)
+	}
+	markSeen(keys...)
+	return len(keys)
+}
 
 var (
 	natsClient *pubsub.Client
@@ -358,10 +378,18 @@ func pollCycle(t time.Time) {
 	}
 
 	// Deduplicate: collectUnseen is a child span of PollCycle. The
-	// batch is capped so cold starts drain over several ticks instead
+	// batch is capped so outages drain over several ticks instead
 	// of one mega-fan-out; only published items are marked seen.
+	// The very first cycle only primes (marks everything, publishes
+	// nothing) so restarts don't replay feed history downstream.
 	candidates := collectUnseen(cycleCtx, feeds)
 	cycleSpan.SetAttributes(attribute.Int("new.items", len(candidates)))
+	if !primed.Swap(true) {
+		n := primeSeen(candidates)
+		cycleSpan.SetAttributes(attribute.Int("primed.items", n))
+		log.InfoFmt("primed poller with %d known items (nothing published)", n)
+		return
+	}
 	batch := selectBatch(candidates, maxItemsPerCycle)
 	cycleSpan.SetAttributes(attribute.Int("published.items", len(batch)))
 	var published []string
