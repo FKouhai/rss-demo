@@ -51,7 +51,7 @@ func ReadyHandler(w http.ResponseWriter, r *http.Request) {
 	defer span.End()
 	log.InfoCtx(ctx, "connection to /ready established")
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+	writeJSON(w, span, http.StatusOK, map[string]string{"status": "ready"})
 }
 
 // HealthzHandler is the route that exposes a healthcheck
@@ -59,5 +59,5 @@ func HealthzHandler(w http.ResponseWriter, r *http.Request) {
 	_, span := tracer.StartServer(r.Context(), "handlers.HealthzHandler")
 	defer span.End()
 	log.InfoCtx(r.Context(), "connection to /health established")
-	writeJSON(w, http.StatusOK, map[string]string{"status": "healthy"})
+	writeJSON(w, span, http.StatusOK, map[string]string{"status": "healthy"})
 }

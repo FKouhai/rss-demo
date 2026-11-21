@@ -23,6 +23,9 @@ func main() {
 		HTTPAddr:    envOr("POLLER_HTTP_ADDR", ":3000"),
 		SkipTracer:  os.Getenv("POLLER_SKIP_TRACER") == "1",
 		NATSURL:     os.Getenv("NATS_URL"),
+		// Local/compose: give the broker time to appear (DNS + boot).
+		// Tests leave it unset for an instant degraded boot.
+		NATSRetryBudget: envDuration("POLLER_NATS_RETRY_BUDGET", 0),
 	}
 
 	app, err := cmd.Run(ctx, cfg)
@@ -42,6 +45,15 @@ func main() {
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return def
+}
+
+func envDuration(key string, def time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
 	}
 	return def
 }
