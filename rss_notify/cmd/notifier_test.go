@@ -7,9 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/FKouhai/rss-demo/libs/metrics"
 	"github.com/FKouhai/rss-demo/libs/pubsub"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 var errTest = errors.New("test error")
@@ -50,7 +52,7 @@ func TestFormatBatch_MultipleJoined(t *testing.T) {
 
 func TestFormatBatch_TruncatesWithMoreCount(t *testing.T) {
 	var dms []pubsub.DeliveryMessage
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		dms = append(dms, pubsub.DeliveryMessage{
 			OutboxID: "x",
 			Title:    strings.Repeat("T", 100),
@@ -173,4 +175,18 @@ func TestStaleItem(t *testing.T) {
 func TestNotifyStop_Empty(t *testing.T) {
 	n := &Notify{}
 	n.Stop() // must not panic with no loop running
+}
+
+// TestDispatchBatch_PoisonMetrics proves the poison Term path is counted,
+// not just logged. The poison branch Terms before any NATS publish, so this
+// stays hermetic (no broker). ack_total/post_total need a broker publish
+func TestDispatchBatch_PoisonMetrics(t *testing.T) {
+	n := NewNotify(nil, 0)
+	reg := metrics.Init("notify-test")
+	poisonTotal := reg.Counter("poison_total", "test poison", "source")
+	n.WithMetrics(&Metrics{PoisonTotal: poisonTotal})
+	n.dispatchBatch(context.Background(), []jetstream.Msg{fakeMsg{data: []byte("not json")}})
+	if got := testutil.ToFloat64(poisonTotal.WithLabelValues("delivery")); got != 1 {
+		t.Errorf("poison_total{delivery} = %v, want 1", got)
+	}
 }

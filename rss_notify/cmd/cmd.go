@@ -16,6 +16,7 @@ import (
 	"time"
 
 	log "github.com/FKouhai/rss-demo/libs/logger"
+	"github.com/FKouhai/rss-demo/libs/metrics"
 	"github.com/FKouhai/rss-demo/libs/pubsub"
 	"github.com/FKouhai/rss-demo/libs/service"
 	"github.com/FKouhai/rss-notify/methods"
@@ -65,8 +66,14 @@ func Run(ctx context.Context, cfg Config) (*App, error) {
 		app.nc = client
 	}
 
+	reg := metrics.Init("notify")
 	if app.nc != nil {
-		noti := NewNotify(app.nc, cfg.MaxItemAge)
+		noti := NewNotify(app.nc, cfg.MaxItemAge).WithMetrics(&Metrics{
+			AckTotal:    reg.Counter("ack_total", "notify acks applied", "status"),
+			PostTotal:   reg.Counter("post_total", "notify webhook posts", "outcome"),
+			PostSecs:    reg.Histogram("post_duration_seconds", "notify webhook post latency", nil, "outcome"),
+			PoisonTotal: reg.Counter("poison_total", "notify poison deliveries termed", "source"),
+		})
 		if err := noti.Start(ctx); err != nil {
 			app.shutdown(context.Background())
 			return nil, fmt.Errorf("notify start: %w", err)
@@ -90,7 +97,7 @@ func Run(ctx context.Context, cfg Config) (*App, error) {
 		methods.ReadyHandler(w, r)
 	})
 
-	srv, err := service.ServeHTTP(cfg.HTTPAddr, mux, "rss_notify")
+	srv, err := service.ServeHTTP(cfg.HTTPAddr, mux, "rss_notify", reg.Handler())
 	if err != nil {
 		app.shutdown(context.Background())
 		return nil, fmt.Errorf("listen %s: %w", cfg.HTTPAddr, err)

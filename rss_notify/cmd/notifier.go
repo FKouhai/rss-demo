@@ -15,6 +15,7 @@ import (
 	webhookpush "github.com/FKouhai/rss-notify/webhookPush"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/propagation"
@@ -47,9 +48,44 @@ type Notify struct {
 	// backlogs must not flood the channel, but new-to-us items post
 	// even when their feed date is old. Zero disables the gate
 	// (everything posts).
-	maxItemAge time.Duration
-	runCtx     context.Context
-	runCancel  context.CancelFunc
+	maxItemAge  time.Duration
+	runCtx      context.Context
+	runCancel   context.CancelFunc
+	ackTotal    *prometheus.CounterVec
+	postTotal   *prometheus.CounterVec
+	postSecs    *prometheus.HistogramVec
+	poisonTotal *prometheus.CounterVec
+}
+
+// Metrics bundles the notify counters. All fields are optional
+type Metrics struct {
+	AckTotal    *prometheus.CounterVec
+	PostTotal   *prometheus.CounterVec
+	PostSecs    *prometheus.HistogramVec
+	PoisonTotal *prometheus.CounterVec
+}
+
+func (n *Notify) WithMetrics(m *Metrics) *Notify {
+	if m == nil {
+		return n
+	}
+
+	n.ackTotal, n.postTotal = m.AckTotal, m.PostTotal
+	n.postSecs, n.poisonTotal = m.PostSecs, m.PoisonTotal
+
+	return n
+}
+
+func (n *Notify) count(cv *prometheus.CounterVec, v string) {
+	if cv != nil {
+		cv.WithLabelValues(v).Inc()
+	}
+}
+
+func (n *Notify) observe(hv *prometheus.HistogramVec, label string, secs float64) {
+	if hv != nil {
+		hv.WithLabelValues(label).Observe(secs)
+	}
 }
 
 // NewNotify constructor for Notify struct
@@ -197,6 +233,7 @@ func (n *Notify) dispatchBatch(ctx context.Context, msgs []jetstream.Msg) {
 		if !ok {
 			// Poison path: unparseable delivery, nothing to retry.
 			// Termed AND logged with trace_id so Loki joins it.
+			n.count(n.poisonTotal, "delivery")
 			log.ErrorFmt("notify poison delivery termed: trace_id=%s subject=%s", traceID, m.Subject())
 			span.End()
 			_ = m.Term()
@@ -245,6 +282,7 @@ func (n *Notify) ackDelivery(ctx context.Context, it item, status pubsub.Status,
 		_ = it.msg.Nak()
 		return
 	}
+	n.count(n.ackTotal, string(status))
 	_ = it.msg.Ack()
 }
 
@@ -324,6 +362,7 @@ func (n *Notify) flushGroup(ctx context.Context, webhookURL string, items []item
 	} else {
 		var code int
 		var err error
+		start := time.Now()
 		d := webhookpush.DiscordNotification{WebHookURL: webhookURL}
 		// Parent the combined POST to the first delivery and link the
 		// rest: one Discord message, one trace, full fan-in visible.
@@ -337,6 +376,12 @@ func (n *Notify) flushGroup(ctx context.Context, webhookURL string, items []item
 		}
 		code, err = d.SendNotification(grpCtx, []string{formatBatch(dms)}, links...)
 		status, detail, retry = classifyWebhook(code, err)
+		outcome := string(status)
+		if retry {
+			outcome = "retry"
+		}
+		n.observe(n.postSecs, outcome, time.Since(start).Seconds())
+		n.count(n.postTotal, outcome)
 	}
 
 	for _, it := range items {
