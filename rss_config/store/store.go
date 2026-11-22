@@ -149,11 +149,13 @@ func (s *configStore) ListFeeds(ctx context.Context) ([]Feed, error) {
 	feeds := make([]Feed, 0)
 	for rows.Next() {
 		var f Feed
-		var active int64
-		if err := rows.Scan(&f.URL, &f.WebhookURL, &active, &f.CreatedAt, &f.UpdatedAt); err != nil {
+		// active arrives as INTEGER 0/1 on sqlite+mysql but as BOOLEAN
+		// on postgres; scan wide and coerce (unit-tested per driver).
+		var activeAny any
+		if err := rows.Scan(&f.URL, &f.WebhookURL, &activeAny, &f.CreatedAt, &f.UpdatedAt); err != nil {
 			return nil, err
 		}
-		f.Active = active != 0
+		f.Active = sqlBool(activeAny)
 		feeds = append(feeds, f)
 	}
 	if err := rows.Err(); err != nil {
@@ -229,6 +231,31 @@ func (s *configStore) IsEmpty(ctx context.Context) (bool, error) {
 
 func (s *configStore) Close() error {
 	return s.db.Close()
+}
+
+// sqlBool coerces a scanned ACTIVE value across engines: sqlite and
+// MySQL report INTEGER 0/1 (int64, sometimes []byte), PostgreSQL
+// reports BOOLEAN (bool). A direct typed scan breaks on at least one
+// engine (seen live: pq bool into int64), so scan wide and convert.
+func sqlBool(v any) bool {
+	switch t := v.(type) {
+	case bool:
+		return t
+	case int64:
+		return t != 0
+	case int:
+		return t != 0
+	case []byte:
+		s := strings.ToLower(string(t))
+		return s == "1" || s == "true" || s == "t"
+	case string:
+		s := strings.ToLower(t)
+		return s == "1" || s == "true" || s == "t"
+	case nil:
+		return false
+	default:
+		return false
+	}
 }
 
 // NewConfig builds a Store for the configured driver. sqlite is the

@@ -168,3 +168,28 @@ func TestStore_SnapshotShape(t *testing.T) {
 		t.Errorf("Feeds overrides = %+v, want only mapped", snap.Feeds)
 	}
 }
+
+func TestSQLBool_Engines(t *testing.T) {
+	// sqlite/mysql hand back INTEGER; postgres hands back BOOLEAN;
+	// drivers may also surface []byte or text. All must coerce.
+	cases := []struct {
+		in   any
+		want bool
+	}{
+		{true, true},
+		{false, false},
+		{int64(1), true},
+		{int64(0), false},
+		{[]byte("1"), true},
+		{[]byte("0"), false},
+		{"true", true},
+		{"t", true},
+		{"", false},
+		{nil, false},
+	}
+	for _, c := range cases {
+		if got := sqlBool(c.in); got != c.want {
+			t.Errorf("sqlBool(%v) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
