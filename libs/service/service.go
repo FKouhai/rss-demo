@@ -103,13 +103,23 @@ type Server struct {
 
 // ServeHTTP binds addr, wraps handler with otelhttp, and serves in the
 // background. It returns once the listener is bound.
-func ServeHTTP(addr string, handler http.Handler, serviceName string) (*Server, error) {
+// optionally as a fourth arg it mounts /metrics (unwrapped)
+func ServeHTTP(addr string, handler http.Handler, serviceName string, metrics ...http.Handler) (*Server, error) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
 	}
+
+	base := otelhttp.NewHandler(handler, serviceName)
+	if len(metrics) > 0 && metrics[0] != nil {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", metrics[0])
+		mux.Handle("/", base)
+		base = mux
+	}
+
 	s := &Server{
-		srv:   &http.Server{Handler: otelhttp.NewHandler(handler, serviceName)},
+		srv:   &http.Server{Handler: base},
 		ln:    ln,
 		ready: make(chan struct{}),
 	}
