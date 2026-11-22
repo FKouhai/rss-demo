@@ -154,3 +154,10 @@ jobs:
           --set ingress.tls.enabled=true
           --set ingress.tls.secretName=rss-tls
           > /dev/null
+
+      - name: Render monitoring enabled (ServiceMonitor present)
+        run: >
+          test $(helm template ci charts/rss-stack --kube-version 1.37
+          --set otel.endpoint=jaeger:4317
+          --set monitoring.enabled=true
+          | grep -c "kind: ServiceMonitor") -eq 1

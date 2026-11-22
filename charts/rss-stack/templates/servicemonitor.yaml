@@ -1,4 +1,4 @@
-{{- if and .Values.monitoring.enabled (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1") }}
+{{- if .Values.monitoring.enabled }}
 {{- $name := include "rss-stack.fullname" . }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
