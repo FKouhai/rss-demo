@@ -9,6 +9,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/FKouhai/rss-demo/libs/metrics"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 const testPage = `<!doctype html><html><head>
@@ -103,5 +106,42 @@ func TestFetch_Blocked(t *testing.T) {
 		if _, err := Fetch(ctx, raw); err == nil {
 			t.Errorf("%s: expected error", raw)
 		}
+	}
+}
+
+func TestFetch_Metrics(t *testing.T) {
+	dialContextFunc = (&net.Dialer{}).DialContext
+	t.Cleanup(func() { dialContextFunc = guardDial })
+	reg := metrics.Init("frontend-test")
+	fetchTotal := reg.Counter("extract_total", "test extracts", "outcome")
+	fetchSecs := reg.Histogram("extract_duration_seconds", "test latency", nil, "outcome")
+	SetMetrics(&Metrics{FetchTotal: fetchTotal, FetchSecs: fetchSecs})
+	t.Cleanup(func() { SetMetrics(nil) })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(testPage)) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := Fetch(ctx, srv.URL+"/posts/1"); err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if got := testutil.ToFloat64(fetchTotal.WithLabelValues("ok")); got != 1 {
+		t.Errorf("extract_total{ok} = %v, want 1", got)
+	}
+	// Histogram children expose as _bucket/_sum/_count, never the bare
+	// name: assert via scrape, same as the metrics lib's handler test.
+	rec := httptest.NewRecorder()
+	reg.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if body := rec.Body.String(); !strings.Contains(body, "rss_frontend_test_extract_duration_seconds_bucket") {
+		t.Errorf("scrape missing histogram series:\n%s", body)
+	}
+	if _, err := Fetch(ctx, "gopher://example.com/x"); err == nil {
+		t.Fatal("expected error for bad scheme, got nil")
+	}
+	if got := testutil.ToFloat64(fetchTotal.WithLabelValues("error")); got != 1 {
+		t.Errorf("extract_total{error} = %v, want 1", got)
 	}
 }

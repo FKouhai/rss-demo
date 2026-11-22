@@ -16,6 +16,7 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/microcosm-cc/bluemonday"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 const (
@@ -23,6 +24,32 @@ const (
 	fetchUA     = "rss-frontend/1.0 (+reader)"
 	imgProxyRaw = "/img?url=%s"
 )
+
+// Metrics bundles the extract counters. All fields optional; nil entries
+// are skipped so tests can attach a subset or nothing at all.
+type Metrics struct {
+	FetchTotal *prometheus.CounterVec
+	FetchSecs  *prometheus.HistogramVec
+}
+
+var extractMetrics *Metrics
+
+// SetMetrics installs the counters; nil-safe so tests can skip it.
+func SetMetrics(m *Metrics) { extractMetrics = m }
+
+func countFetch(outcome string) {
+	if extractMetrics == nil || extractMetrics.FetchTotal == nil {
+		return
+	}
+	extractMetrics.FetchTotal.WithLabelValues(outcome).Inc()
+}
+
+func observeFetch(outcome string, secs float64) {
+	if extractMetrics == nil || extractMetrics.FetchSecs == nil {
+		return
+	}
+	extractMetrics.FetchSecs.WithLabelValues(outcome).Observe(secs)
+}
 
 // Article is a fetched, sanitized page.
 type Article struct {
@@ -71,36 +98,50 @@ func guardDial(ctx context.Context, network, addr string) (net.Conn, error) {
 }
 
 // Fetch downloads rawURL and returns the extracted article.
-func Fetch(ctx context.Context, rawURL string) (Article, error) {
+func Fetch(ctx context.Context, rawURL string) (art Article, err error) {
+	start := time.Now()
+	outcome := "ok"
+	defer func() {
+		observeFetch(outcome, time.Since(start).Seconds())
+		countFetch(outcome)
+	}()
+	fail := func(e error) (Article, error) {
+		outcome = "error"
+		return Article{}, e
+	}
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return Article{}, err
+		return fail(err)
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return Article{}, fmt.Errorf("extract: unsupported scheme %q", u.Scheme)
+		return fail(fmt.Errorf("extract: unsupported scheme %q", u.Scheme))
 	}
 	if u.User != nil {
-		return Article{}, fmt.Errorf("extract: credentials in URL blocked")
+		return fail(fmt.Errorf("extract: credentials in URL blocked"))
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return Article{}, err
+		return fail(err)
 	}
 	req.Header.Set("User-Agent", fetchUA)
 	req.Header.Set("Accept", "text/html,application/xhtml+xml")
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return Article{}, err
+		return fail(err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return Article{}, fmt.Errorf("extract: status %d", resp.StatusCode)
+		return fail(fmt.Errorf("extract: status %d", resp.StatusCode))
 	}
 	if ct := resp.Header.Get("Content-Type"); ct != "" &&
 		!strings.Contains(ct, "html") && !strings.Contains(ct, "text") {
-		return Article{}, fmt.Errorf("extract: not an article page (%s)", ct)
+		return fail(fmt.Errorf("extract: not an article page (%s)", ct))
 	}
-	return Parse(u, io.LimitReader(resp.Body, maxBody))
+	art, err = Parse(u, io.LimitReader(resp.Body, maxBody))
+	if err != nil {
+		return fail(err)
+	}
+	return art, nil
 }
 
 // FetchBytes downloads rawURL with the SSRF guard, enforcing a size cap
