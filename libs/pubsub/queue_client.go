@@ -6,9 +6,11 @@ import (
 	"time"
 
 	"github.com/FKouhai/rss-demo/libs/instrumentation"
+	log "github.com/FKouhai/rss-demo/libs/logger"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"go.opentelemetry.io/otel/attribute"
+	"go.uber.org/zap"
 )
 
 // Client defines the shape of a re-usable nats client
@@ -133,6 +135,8 @@ func (c *Client) EnsureStream(ctx context.Context, cfg jetstream.StreamConfig) (
 	stream, err := c.JsContext.CreateOrUpdateStream(spanCtx, cfg)
 	if err != nil {
 		span.RecordError(err)
+		log.ErrorCtx(spanCtx, "ensure stream failed",
+			zap.String("stream", cfg.Name), zap.Error(err))
 		return nil, err
 	}
 	return stream, nil
@@ -157,6 +161,8 @@ func (c *Client) EnsureConsumer(ctx context.Context, streamName string, cfg jets
 
 	if err != nil {
 		span.RecordError(err)
+		log.ErrorCtx(spanCtx, "ensure consumer failed",
+			zap.String("consumer", cfg.Durable), zap.String("stream", streamName), zap.Error(err))
 		return nil, err
 	}
 	return consumer, nil
