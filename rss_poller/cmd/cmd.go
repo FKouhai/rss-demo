@@ -17,6 +17,7 @@ import (
 	"time"
 
 	log "github.com/FKouhai/rss-demo/libs/logger"
+	"github.com/FKouhai/rss-demo/libs/metrics"
 	"github.com/FKouhai/rss-demo/libs/pubsub"
 	"github.com/FKouhai/rss-demo/libs/service"
 	"github.com/FKouhai/rss-poller/handlers"
@@ -85,6 +86,12 @@ func Run(ctx context.Context, cfg Config) (*App, error) {
 	// kept while config is unreachable.
 	handlers.StartConfigPoll(cfg.ConfigURL, cfg.ConfigSecret, cfg.ConfigPollInterval)
 
+	reg := metrics.Init("poller")
+	handlers.SetMetrics(&handlers.Metrics{
+		CycleItems:  reg.Counter("cycle_items_total", "poller items per cycle", "outcome"),
+		FetchErrors: reg.Counter("fetch_error_total", "poller feed fetch failures"),
+	})
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", handlers.HealthzHandler)
 	// Readiness means wired: HTTP serving alone is not enough for a
@@ -100,7 +107,7 @@ func Run(ctx context.Context, cfg Config) (*App, error) {
 		handlers.ReadyHandler(w, r)
 	})
 
-	srv, err := service.ServeHTTP(cfg.HTTPAddr, mux, "rss_poller")
+	srv, err := service.ServeHTTP(cfg.HTTPAddr, mux, "rss_poller", reg.Handler())
 	if err != nil {
 		app.shutdown(context.Background())
 		return nil, fmt.Errorf("listen %s: %w", cfg.HTTPAddr, err)

@@ -16,6 +16,7 @@ import (
 	log "github.com/FKouhai/rss-demo/libs/logger"
 	"github.com/FKouhai/rss-demo/libs/pubsub"
 	"github.com/mmcdole/gofeed"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
@@ -78,6 +79,48 @@ var (
 	knownFeedsMu sync.Mutex
 	knownFeeds   = make(map[string]bool)
 )
+
+// Metrics bundles the poller counters. All fields optional; nil entries
+// are skipped so tests can attach a subset or nothing at all.
+type Metrics struct {
+	CycleItems  *prometheus.CounterVec
+	FetchErrors *prometheus.CounterVec
+}
+
+var (
+	metricsMu     sync.Mutex
+	pollerMetrics *Metrics
+)
+
+// SetMetrics installs the counters; nil-safe so tests can skip it.
+func SetMetrics(m *Metrics) {
+	metricsMu.Lock()
+	defer metricsMu.Unlock()
+	pollerMetrics = m
+}
+
+func addCycle(outcome string, n int) {
+	if n <= 0 {
+		return
+	}
+	metricsMu.Lock()
+	m := pollerMetrics
+	metricsMu.Unlock()
+	if m == nil || m.CycleItems == nil {
+		return
+	}
+	m.CycleItems.WithLabelValues(outcome).Add(float64(n))
+}
+
+func incFetchError() {
+	metricsMu.Lock()
+	m := pollerMetrics
+	metricsMu.Unlock()
+	if m == nil || m.FetchErrors == nil {
+		return
+	}
+	m.FetchErrors.WithLabelValues().Inc()
+}
 
 func markKnown(urls ...string) {
 	knownFeedsMu.Lock()
@@ -242,6 +285,7 @@ func ParseRSS(ctx context.Context, feedURL []string) ([]parsedFeed, error) {
 				span.AddEvent("FAILED_PROCESS_FEED")
 				feedSpan.RecordError(err)
 				log.ErrorCtx(feedCtx, "feed failed, skipping", zap.String("url", v), zap.Error(err))
+				incFetchError()
 				return nil
 			}
 			feeds[i] = feed
@@ -427,6 +471,7 @@ func pollCycle(t time.Time) {
 	if !primed.Swap(true) {
 		n := primeSeen(candidates)
 		markKnown(urls...)
+		addCycle("primed", n)
 		cycleSpan.SetAttributes(attribute.Int("primed.items", n))
 		log.InfoFmt("primed poller with %d known items (nothing published)", n)
 		return
@@ -449,6 +494,7 @@ func pollCycle(t time.Time) {
 			}
 		}
 		taster := selectBatch(backlog, maxItemsPerCycle)
+		addCycle("taster", len(taster))
 		dropped := len(backlog) - len(taster)
 		if dropped > 0 {
 			// Mark only the unpublished tail as seen; the taster
@@ -465,6 +511,7 @@ func pollCycle(t time.Time) {
 			}
 			n := len(dropKeys)
 			markSeen(dropKeys...)
+			addCycle("dropped", n)
 			cycleSpan.SetAttributes(attribute.Int("dropped.new-feeds", n))
 			log.InfoFmt("dropped %d backlog items from %d new feeds (taster %d)", n, len(fresh), len(taster))
 		} else if len(taster) > 0 {
@@ -504,12 +551,15 @@ func pollCycle(t time.Time) {
 			payload, err := json.Marshal(dm)
 			if err != nil {
 				instrumentation.Fail(itemSpan, err, "failed to marshal item %s: %v", u.item.Link, err)
+				addCycle("error", 1)
 				return
 			}
 			if _, err := nc.Publish(itemCtx, pubsub.SubjectFeedsNew, payload, dm.MsgID()); err != nil {
 				instrumentation.Fail(itemSpan, err, "failed to publish item %s: %v", u.item.Link, err)
+				addCycle("error", 1)
 				return
 			}
+			addCycle("published", 1)
 		}()
 	}
 }
