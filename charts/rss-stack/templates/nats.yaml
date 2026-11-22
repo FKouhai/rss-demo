@@ -42,6 +42,10 @@ spec:
       labels:
         {{- include "rss-stack.labels" . | nindent 8 }}
         app.kubernetes.io/name: nats
+      {{- with .Values.nats.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       containers:
         - name: nats

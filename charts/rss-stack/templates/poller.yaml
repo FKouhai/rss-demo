@@ -38,6 +38,13 @@ spec:
               value: "60s"
             - name: CONFIG_URL
               value: {{ $svc.configUrl | default (include "rss-stack.svcUrl" (dict "root" $ "svc" "config")) | quote }}
+            {{- if .Values.secrets.gatewaySecret }}
+            - name: CONFIG_GATEWAY_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.gatewaySecret | quote }}
+                  key: gateway-secret
+            {{- end }}
             {{- if .Values.secrets.webhookSecret }}
             - name: DEFAULT_WEBHOOK_URL
               valueFrom:

@@ -34,6 +34,10 @@ spec:
       labels:
         {{- include "rss-stack.labels" . | nindent 8 }}
         app.kubernetes.io/name: rss-config
+      {{- with $svc.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       {{- with .Values.global.nodeSelector }}
       nodeSelector:

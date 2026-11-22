@@ -21,6 +21,11 @@ otel:
 
 nats:
   enabled: true
+  # Annotations on the NATS pod template — e.g. Velero file-backup
+  # opt-in so JetStream storage survives: {"backup.velero.io/backup-volumes": "data"}
+  # (unneeded if your StorageClass does CSI snapshots, which Velero
+  # picks up automatically).
+  podAnnotations: {}
   # Empty = this release's namespace. Set for shared infra (services
   # then address nats.<namespace> automatically unless overridden).
   namespace: ""
@@ -50,7 +55,7 @@ ingress:
 
 services:
   poller:
-    repository: rss-poller
+    repository: rss_poller
     tag: "" # default Chart.AppVersion
     resources: {}
     # Empty url = chart default (embedded service or shared namespace).
@@ -61,7 +66,7 @@ services:
     extraEnv: []
 
   outbox:
-    repository: rss-outbox
+    repository: rss_outbox
     tag: ""
     resources: {}
     nats: { url: "", authSecret: "" }
@@ -69,11 +74,14 @@ services:
       driver: sqlite # | postgres
       sqlite: { storage: 1Gi }
       postgres: { dsnSecret: "", dsnKey: dsn }
+    # Annotations on the pod template (e.g. Velero backup opt-in
+    # for the sqlite volume: {"backup.velero.io/backup-volumes": "data"}).
+    podAnnotations: {}
     env: {}
     extraEnv: []
 
   notify:
-    repository: rss-notify
+    repository: rss_notify
     tag: ""
     resources: {}
     nats: { url: "", authSecret: "" }
@@ -81,7 +89,7 @@ services:
     extraEnv: []
 
   aggregator:
-    repository: rss-aggregator
+    repository: rss_aggregator
     tag: ""
     resources: {}
     nats: { url: "", authSecret: "" }
@@ -89,11 +97,14 @@ services:
       driver: sqlite
       sqlite: { storage: 1Gi }
       postgres: { dsnSecret: "", dsnKey: dsn }
+    # Annotations on the pod template (e.g. Velero backup opt-in
+    # for the sqlite volume: {"backup.velero.io/backup-volumes": "data"}).
+    podAnnotations: {}
     env: {}
     extraEnv: []
 
   config:
-    repository: rss-config
+    repository: rss_config
     tag: ""
     resources: {}
     # No NATS in v1 (HTTP-only service); no nats block on purpose.
@@ -101,12 +112,15 @@ services:
       driver: sqlite
       sqlite: { storage: 1Gi }
       postgres: { dsnSecret: "", dsnKey: dsn }
+    # Annotations on the pod template (e.g. Velero backup opt-in
+    # for the sqlite volume: {"backup.velero.io/backup-volumes": "data"}).
+    podAnnotations: {}
     adminGroups: admin
     env: {}
     extraEnv: []
 
   frontend:
-    repository: rss-frontend
+    repository: rss_frontend
     tag: ""
     resources: {}
     # Which config service backs the Configure page.
