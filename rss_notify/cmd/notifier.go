@@ -183,7 +183,7 @@ func (n *Notify) dispatchBatch(ctx context.Context, msgs []jetstream.Msg) {
 		}
 	}()
 
-	_, batchSpan := tracer.Start(ctx, "notify.dispatch")
+	batchCtx, batchSpan := tracer.Start(ctx, "notify.dispatch")
 	defer batchSpan.End()
 	batchSpan.SetAttributes(attribute.Int("messages.received", len(msgs)))
 
@@ -192,8 +192,12 @@ func (n *Notify) dispatchBatch(ctx context.Context, msgs []jetstream.Msg) {
 	stale := 0
 	for _, m := range msgs {
 		span := consumerSpan(m)
+		traceID := span.SpanContext().TraceID().String()
 		dm, ok := parseDelivery(m)
 		if !ok {
+			// Poison path: unparseable delivery, nothing to retry.
+			// Termed AND logged with trace_id so Loki joins it.
+			log.ErrorFmt("notify poison delivery termed: trace_id=%s subject=%s", traceID, m.Subject())
 			span.End()
 			_ = m.Term()
 			continue
@@ -206,7 +210,7 @@ func (n *Notify) dispatchBatch(ctx context.Context, msgs []jetstream.Msg) {
 			// reason, and move on.
 			stale++
 			span.SetAttributes(attribute.Bool("notify.stale", true))
-			n.ackDelivery(ctx, item{dm: dm, msg: m, span: span}, pubsub.StatusSkipped, "older than max item age")
+			n.ackDelivery(batchCtx, item{dm: dm, msg: m, span: span}, pubsub.StatusSkipped, "older than max item age")
 			continue
 		}
 		if _, seen := groups[dm.WebhookURL]; !seen {
@@ -216,23 +220,28 @@ func (n *Notify) dispatchBatch(ctx context.Context, msgs []jetstream.Msg) {
 	}
 	batchSpan.SetAttributes(attribute.Int("messages.stale", stale))
 	for _, url := range order {
-		n.flushGroup(ctx, url, groups[url])
+		n.flushGroup(batchCtx, url, groups[url])
 	}
 }
 
 // ackDelivery publishes the outbox ack and settles the NATS message.
 // Publish failure Naks (redeliver; outbox UPDATEs are idempotent).
+// Every failure pairs span.RecordError with a trace_id log so Loki
+// stays the complete record under head sampling.
 func (n *Notify) ackDelivery(ctx context.Context, it item, status pubsub.Status, detail string) {
 	defer it.span.End()
+	traceID := it.span.SpanContext().TraceID().String()
 	ack := pubsub.AckReply{TenantID: it.dm.TenantID, OutboxID: it.dm.OutboxID, Status: status, Error: detail}
 	payload, err := json.Marshal(ack)
 	if err != nil {
 		it.span.RecordError(err)
+		log.ErrorFmt("notify ack marshal failed: trace_id=%s outbox=%s: %v", traceID, it.dm.OutboxID, err)
 		_ = it.msg.Nak()
 		return
 	}
 	if _, err := n.nc.Publish(ctx, pubsub.SubjectAcksDelivered, payload, it.dm.OutboxID); err != nil {
 		it.span.RecordError(err)
+		log.ErrorFmt("notify ack publish failed: trace_id=%s outbox=%s: %v", traceID, it.dm.OutboxID, err)
 		_ = it.msg.Nak()
 		return
 	}
