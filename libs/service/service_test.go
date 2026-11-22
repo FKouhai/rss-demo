@@ -90,6 +90,85 @@ func TestServeHTTP_ReadyAndShutdown(t *testing.T) {
 	}
 }
 
+func TestServeHTTP_MetricsMounted(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	})
+	stub := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("stub-metrics"))
+	})
+	s, err := ServeHTTP("127.0.0.1:0", mux, "test-svc", stub)
+	if err != nil {
+		t.Fatalf("ServeHTTP: %v", err)
+	}
+	select {
+	case <-s.Ready():
+	case <-time.After(2 * time.Second):
+		t.Fatal("Ready did not fire")
+	}
+
+	// /metrics serves the injected handler, untouched by otel wrapping.
+	resp, err := http.Get("http://" + s.Addr().String() + "/metrics")
+	if err != nil {
+		t.Fatalf("GET /metrics: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if string(body) != "stub-metrics" {
+		t.Errorf("/metrics body = %q, want stub-metrics", body)
+	}
+
+	// Service routes still work alongside it.
+	resp, err = http.Get("http://" + s.Addr().String() + "/healthz")
+	if err != nil {
+		t.Fatalf("GET /healthz: %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if string(body) != "ok" {
+		t.Errorf("/healthz body = %q, want ok", body)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := s.Shutdown(ctx); err != nil {
+		t.Errorf("Shutdown: %v", err)
+	}
+}
+
+func TestServeHTTP_NoMetrics(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	})
+	// No fourth arg and explicit nil both mean: no /metrics route.
+	for _, extra := range [][]http.Handler{nil, {nil}} {
+		s, err := ServeHTTP("127.0.0.1:0", mux, "test-svc", extra...)
+		if err != nil {
+			t.Fatalf("ServeHTTP: %v", err)
+		}
+		select {
+		case <-s.Ready():
+		case <-time.After(2 * time.Second):
+			t.Fatal("Ready did not fire")
+		}
+		resp, err := http.Get("http://" + s.Addr().String() + "/metrics")
+		if err != nil {
+			t.Fatalf("GET /metrics: %v", err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("/metrics status = %d, want 404 when unmounted", resp.StatusCode)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		if err := s.Shutdown(ctx); err != nil {
+			t.Errorf("Shutdown: %v", err)
+		}
+		cancel()
+	}
+}
+
 func TestBaseConfig_WithDefaults(t *testing.T) {
 	t.Setenv("SERVICE_FQDN", "")
 	c := BaseConfig{}
