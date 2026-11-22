@@ -476,3 +476,24 @@ func TestPrimeSeen_Empty(t *testing.T) {
 		t.Fatalf("primeSeen(nil) = %d, want 0", n)
 	}
 }
+
+func TestKnownFeeds_PrimeNewFeeds(t *testing.T) {
+	// New feed URLs report unknown until marked; marking is idempotent.
+	knownFeedsMu.Lock()
+	old := knownFeeds
+	knownFeeds = make(map[string]bool)
+	knownFeedsMu.Unlock()
+	t.Cleanup(func() {
+		knownFeedsMu.Lock()
+		knownFeeds = old
+		knownFeedsMu.Unlock()
+	})
+	markKnown("https://example.com/a.rss")
+	if got := unknownFeeds([]string{"https://example.com/a.rss", "https://example.com/b.rss"}); len(got) != 1 || got[0] != "https://example.com/b.rss" {
+		t.Fatalf("unknownFeeds = %v, want [b]", got)
+	}
+	markKnown("https://example.com/b.rss")
+	if got := unknownFeeds([]string{"https://example.com/a.rss", "https://example.com/b.rss"}); len(got) != 0 {
+		t.Fatalf("unknownFeeds after mark = %v, want empty", got)
+	}
+}
