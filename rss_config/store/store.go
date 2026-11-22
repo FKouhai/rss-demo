@@ -86,9 +86,12 @@ func (s *configStore) UpsertFeed(ctx context.Context, url, webhookURL string) er
 	now := time.Now().UTC()
 	p := func(n int) string { return db.Placeholder(s.driver, n) }
 	// Try update first so created_at survives re-pushes.
+	// active is passed as a bool placeholder (not literal 1): postgres
+	// BOOLEAN rejects integer expressions, while sqlite/mysql coerce
+	// bool true to 1.
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE feeds SET webhook_url = `+p(1)+`, active = 1, updated_at = `+p(2)+` WHERE url = `+p(3),
-		webhookURL, now, url)
+		`UPDATE feeds SET webhook_url = `+p(1)+`, active = `+p(2)+`, updated_at = `+p(3)+` WHERE url = `+p(4),
+		webhookURL, true, now, url)
 	if err != nil {
 		return err
 	}
@@ -102,7 +105,7 @@ func (s *configStore) UpsertFeed(ctx context.Context, url, webhookURL string) er
 	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO feeds (url, webhook_url, active, created_at, updated_at) VALUES (`+
 			db.Placeholders(s.driver, 1, 5)+`)`,
-		url, webhookURL, 1, now, now)
+		url, webhookURL, true, now, now)
 	return err
 }
 
@@ -115,7 +118,7 @@ func (s *configStore) EnsureFeed(ctx context.Context, url string) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO feeds (url, webhook_url, active, created_at, updated_at) VALUES (`+
 			db.Placeholders(s.driver, 1, 5)+`)`,
-		url, "", 1, now, now)
+		url, "", true, now, now)
 	if err != nil {
 		if db.IsDuplicateKey(err) {
 			return nil
