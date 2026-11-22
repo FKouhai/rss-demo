@@ -11,6 +11,9 @@ import (
 
 	"github.com/FKouhai/rss-aggregator/store"
 	db "github.com/FKouhai/rss-demo/libs/db"
+	"github.com/FKouhai/rss-demo/libs/metrics"
+	"github.com/FKouhai/rss-demo/libs/pubsub"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	_ "modernc.org/sqlite"
 )
 
@@ -179,5 +182,53 @@ func TestAggregator_Stop_Empty(t *testing.T) {
 	ag.Stop() // must not panic with no subscriptions
 	if len(ag.consumeCtxs) != 0 {
 		t.Errorf("consumeCtxs = %v, want empty", ag.consumeCtxs)
+	}
+}
+
+func newTestAggregator(t *testing.T) (*Aggregator, store.Store) {
+	t.Helper()
+	s, err := store.NewConfig(store.Config{
+		Driver: db.DriverSQLite,
+		DSN:    filepath.Join(t.TempDir(), "aggregator_metrics_test.db"),
+	})
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	return NewAggregator(nil, s), s
+}
+
+func TestHandleFeed_Metrics(t *testing.T) {
+	ag, _ := newTestAggregator(t)
+	reg := metrics.Init("aggregator-test")
+	saveTotal := reg.Counter("save_total", "test saves", "outcome")
+	poisonTotal := reg.Counter("poison_total", "test poison", "source")
+	ag.WithMetrics(&Metrics{SaveTotal: saveTotal, PoisonTotal: poisonTotal})
+	ctx := context.Background()
+
+	raw, _ := json.Marshal(map[string]string{
+		"feed_url": "https://example.com/rss", "title": "T",
+		"link": "https://example.com/1", "published_at": "2026-11-22T00:00:00Z",
+	})
+	if _, err := ag.handleFeed(ctx, pubsub.Message{Data: raw}); err != nil {
+		t.Fatalf("handleFeed: %v", err)
+	}
+	if got := testutil.ToFloat64(saveTotal.WithLabelValues("saved")); got != 1 {
+		t.Errorf("save_total{saved} = %v, want 1", got)
+	}
+	// Same item again collapses onto the row: duplicate, not saved.
+	if _, err := ag.handleFeed(ctx, pubsub.Message{Data: raw}); err != nil {
+		t.Fatalf("handleFeed duplicate: %v", err)
+	}
+	if got := testutil.ToFloat64(saveTotal.WithLabelValues("duplicate")); got != 1 {
+		t.Errorf("save_total{duplicate} = %v, want 1", got)
+	}
+
+	// Poison never reaches the store.
+	if _, err := ag.handleFeed(ctx, pubsub.Message{Data: []byte("not json")}); err == nil {
+		t.Fatal("expected unmarshal error, got nil")
+	}
+	if got := testutil.ToFloat64(poisonTotal.WithLabelValues("feed")); got != 1 {
+		t.Errorf("poison_total{feed} = %v, want 1", got)
 	}
 }

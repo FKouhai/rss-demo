@@ -11,6 +11,7 @@ import (
 	log "github.com/FKouhai/rss-demo/libs/logger"
 	"github.com/FKouhai/rss-demo/libs/pubsub"
 	"github.com/nats-io/nats.go/jetstream"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // Aggregator persists feed items consumed from the FEEDS stream. It owns
@@ -23,6 +24,30 @@ type Aggregator struct {
 	nc          *pubsub.Client
 	store       store.Store
 	consumeCtxs []jetstream.ConsumeContext
+	saveTotal   *prometheus.CounterVec
+	poisonTotal *prometheus.CounterVec
+}
+
+// Metrics bundles the aggregator counters. All fields optional; nil
+// entries are skipped so tests can attach a subset or nothing at all.
+type Metrics struct {
+	SaveTotal   *prometheus.CounterVec
+	PoisonTotal *prometheus.CounterVec
+}
+
+// WithMetrics attaches counters; nil-safe so tests can skip it.
+func (a *Aggregator) WithMetrics(m *Metrics) *Aggregator {
+	if m == nil {
+		return a
+	}
+	a.saveTotal, a.poisonTotal = m.SaveTotal, m.PoisonTotal
+	return a
+}
+
+func (a *Aggregator) count(cv *prometheus.CounterVec, v string) {
+	if cv != nil {
+		cv.WithLabelValues(v).Inc()
+	}
 }
 
 // NewAggregator builds an Aggregator over an established NATS client and
@@ -73,6 +98,7 @@ func (a *Aggregator) Start(ctx context.Context) error {
 func (a *Aggregator) handleFeed(ctx context.Context, msg pubsub.Message) (pubsub.AckDecision, error) {
 	var item pubsub.RSSItem
 	if err := json.Unmarshal(msg.Data, &item); err != nil {
+		a.count(a.poisonTotal, "feed")
 		return pubsub.AckDecisionTerm, err
 	}
 	entry := store.Item{
@@ -84,10 +110,12 @@ func (a *Aggregator) handleFeed(ctx context.Context, msg pubsub.Message) (pubsub
 	}
 	if _, err := a.store.Save(ctx, entry); err != nil {
 		if db.IsDuplicateKey(err) {
+			a.count(a.saveTotal, "duplicate")
 			return pubsub.AckDecisionAck, nil
 		}
 		return pubsub.AckDecisionNack, err
 	}
+	a.count(a.saveTotal, "saved")
 	return pubsub.AckDecisionAck, nil
 }
 
