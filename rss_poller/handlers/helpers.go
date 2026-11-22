@@ -69,6 +69,36 @@ const maxItemsPerCycle = 5
 // after the prime publish normally.
 var primed atomic.Bool
 
+// knownFeeds tracks feed URLs already primed. Feeds appearing mid-run
+// (added via config after boot) get the same treatment as the boot
+// prime: their backlog is marked seen, nothing published, so adding a
+// feed doesn't flood downstream with its history. Only genuinely new
+// items after that publish.
+var (
+	knownFeedsMu sync.Mutex
+	knownFeeds   = make(map[string]bool)
+)
+
+func markKnown(urls ...string) {
+	knownFeedsMu.Lock()
+	defer knownFeedsMu.Unlock()
+	for _, u := range urls {
+		knownFeeds[u] = true
+	}
+}
+
+func unknownFeeds(urls []string) []string {
+	knownFeedsMu.Lock()
+	defer knownFeedsMu.Unlock()
+	var out []string
+	for _, u := range urls {
+		if !knownFeeds[u] {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
 // primeSeen marks every candidate seen without publishing. First cycle
 // after boot only: restarts go silent instead of replaying history.
 func primeSeen(candidates []unseenItem) int {
@@ -377,7 +407,8 @@ func pollCycle(t time.Time) {
 	}
 
 	snapshot := getConfigSnapshot()
-	feeds, err := ParseRSS(cycleCtx, feedURLs(snapshot))
+	urls := feedURLs(snapshot)
+	feeds, err := ParseRSS(cycleCtx, urls)
 	if err != nil {
 		cycleSpan.RecordError(err)
 		return
@@ -392,9 +423,53 @@ func pollCycle(t time.Time) {
 	cycleSpan.SetAttributes(attribute.Int("new.items", len(candidates)))
 	if !primed.Swap(true) {
 		n := primeSeen(candidates)
+		markKnown(urls...)
 		cycleSpan.SetAttributes(attribute.Int("primed.items", n))
 		log.InfoFmt("primed poller with %d known items (nothing published)", n)
 		return
+	}
+	// New feeds get a taster, not a flood: up to maxItemsPerCycle of
+	// their newest items publish, the rest of the backlog is dropped
+	// (marked seen). Known feeds drain normally within the remaining
+	// budget, remainder staying unseen for later ticks.
+	if fresh := unknownFeeds(urls); len(fresh) > 0 {
+		freshSet := make(map[string]bool, len(fresh))
+		for _, u := range fresh {
+			freshSet[u] = true
+		}
+		var backlog, live []unseenItem
+		for _, c := range candidates {
+			if freshSet[c.item.FeedURL] {
+				backlog = append(backlog, c)
+			} else {
+				live = append(live, c)
+			}
+		}
+		taster := selectBatch(backlog, maxItemsPerCycle)
+		dropped := len(backlog) - len(taster)
+		if dropped > 0 {
+			// Mark only the unpublished tail as seen; the taster
+			// itself is marked via the normal published path below.
+			tasterKeys := make(map[string]bool, len(taster))
+			for _, t := range taster {
+				tasterKeys[t.key] = true
+			}
+			var dropKeys []string
+			for _, c := range backlog {
+				if !tasterKeys[c.key] {
+					dropKeys = append(dropKeys, c.key)
+				}
+			}
+			n := len(dropKeys)
+			markSeen(dropKeys...)
+			cycleSpan.SetAttributes(attribute.Int("dropped.new-feeds", n))
+			log.InfoFmt("dropped %d backlog items from %d new feeds (taster %d)", n, len(fresh), len(taster))
+		} else if len(taster) > 0 {
+			log.InfoFmt("taster %d items from %d new feeds", len(taster), len(fresh))
+		}
+		markKnown(fresh...)
+		// Taster joins the live batch; total still capped below.
+		candidates = append(taster, live...)
 	}
 	batch := selectBatch(candidates, maxItemsPerCycle)
 	cycleSpan.SetAttributes(attribute.Int("published.items", len(batch)))
