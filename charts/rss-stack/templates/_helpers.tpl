@@ -35,10 +35,11 @@ app.kubernetes.io/name: {{ .name }}
 app.kubernetes.io/instance: {{ .root.Release.Name }}
 {{- end -}}
 
-{{/* Service image: global registry + per-service repo + tag (default appVersion). */}}
+{{/* Service image. Registry + repo + arch suffix + tag, mirroring
+the release workflow's "${image}-${system}:${tag}" naming. */}}
 {{- define "rss-stack.image" -}}
 {{- $tag := .tag | default .root.Chart.AppVersion -}}
-{{- printf "%s/%s:%s" .root.Values.global.imageRegistry .repository $tag -}}
+{{- printf "%s/%s%s:%s" .root.Values.global.imageRegistry .repository .root.Values.global.archSuffix $tag -}}
 {{- end -}}
 
 {{/* NATS namespace: shared-infra override or this release. */}}

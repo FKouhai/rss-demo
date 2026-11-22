@@ -5,6 +5,10 @@
 global:
   # Registry + org holding the service images (ghcr.io/<owner>).
   imageRegistry: ghcr.io/fkouhai
+  # Suffix appended to every repository, mirroring the release
+  # workflow's "${image}-${system}" tags (per-arch, no manifest list).
+  # Empty it the day images ship as multi-arch manifests.
+  archSuffix: "-x86_64-linux"
   # Scheduling constraints applied to every Go service pod
   # (e.g. {"kubernetes.io/arch": "amd64"} for per-arch image tags).
   nodeSelector: {}
