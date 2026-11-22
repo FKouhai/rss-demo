@@ -10,6 +10,7 @@ import (
 	"github.com/FKouhai/rss-demo/libs/auth"
 	"github.com/FKouhai/rss-demo/libs/instrumentation"
 	log "github.com/FKouhai/rss-demo/libs/logger"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -35,6 +36,32 @@ func SetStore(s store.Store) { db = s }
 func SetAuth(enforced bool, groups []string) {
 	authEnforced = enforced
 	adminGroups = groups
+}
+
+// Metrics bundles the config counters. All fields optional; nil entries
+// are skipped so tests can attach a subset or nothing at all.
+type Metrics struct {
+	UpsertTotal *prometheus.CounterVec
+	FeedsCount  *prometheus.GaugeVec
+}
+
+var configMetrics *Metrics
+
+// SetMetrics installs the counters; nil-safe so tests can skip it.
+func SetMetrics(m *Metrics) { configMetrics = m }
+
+func countUpsert(outcome string) {
+	if configMetrics == nil || configMetrics.UpsertTotal == nil {
+		return
+	}
+	configMetrics.UpsertTotal.WithLabelValues(outcome).Inc()
+}
+
+func setFeedsCount(n int) {
+	if configMetrics == nil || configMetrics.FeedsCount == nil {
+		return
+	}
+	configMetrics.FeedsCount.WithLabelValues().Set(float64(n))
 }
 
 // HealthzHandler healthz endpoint
@@ -119,6 +146,7 @@ func ConfigHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	span.SetAttributes(attribute.Int("feeds.count", len(snap.RSSFeeds)))
+	setFeedsCount(len(snap.RSSFeeds))
 	writeJSON(w, http.StatusOK, snap)
 }
 
@@ -134,6 +162,7 @@ func FeedsHandler(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, "list failed")
 			return
 		}
+		setFeedsCount(len(feeds))
 		writeJSON(w, http.StatusOK, map[string]any{"feeds": feeds})
 	case http.MethodPost:
 		if !requireAdmin(w, r) {
@@ -155,9 +184,11 @@ func FeedsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := db.UpsertFeed(ctx, body.URL, body.WebhookURL); err != nil {
 			instrumentation.Fail(span, err, "upsert feed: %v", err)
+			countUpsert("error")
 			writeErr(w, http.StatusInternalServerError, "upsert failed")
 			return
 		}
+		countUpsert("stored")
 		span.SetAttributes(attribute.String("feed.url", body.URL))
 		writeJSON(w, http.StatusOK, store.Feed{URL: body.URL, WebhookURL: body.WebhookURL, Active: true})
 	case http.MethodDelete:
@@ -256,16 +287,20 @@ func HookUpdateHandler(w http.ResponseWriter, r *http.Request) {
 	for _, u := range body.RSSFeeds {
 		if err := db.EnsureFeed(ctx, u); err != nil {
 			instrumentation.Fail(span, err, "ensure feed: %v", err)
+			countUpsert("error")
 			writeErr(w, http.StatusInternalServerError, "apply failed")
 			return
 		}
+		countUpsert("stored")
 	}
 	for _, f := range body.Feeds {
 		if err := db.UpsertFeed(ctx, f.URL, f.WebhookURL); err != nil {
 			instrumentation.Fail(span, err, "upsert feed: %v", err)
+			countUpsert("error")
 			writeErr(w, http.StatusInternalServerError, "apply failed")
 			return
 		}
+		countUpsert("stored")
 	}
 	defaultUpdated := false
 	if body.WebhookURL != nil {
