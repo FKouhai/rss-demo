@@ -85,7 +85,7 @@ func (s *aggregatorStore) List(ctx context.Context, q, feed string, limit, offse
 	p := func(n int) string { return db.Placeholder(s.driver, n) }
 
 	where := `(` + p(1) + ` = '' OR feed_url = ` + p(2) + `)` +
-		` AND (` + p(3) + ` = '' OR title LIKE ` + p(4) + ` ESCAPE '\' OR link LIKE ` + p(5) + ` ESCAPE '\')`
+		` AND (` + p(3) + ` = '' OR title LIKE ` + p(4) + ` ESCAPE '!' OR link LIKE ` + p(5) + ` ESCAPE '!')`
 
 	like := "%" + escapeLIKE(q) + "%"
 
@@ -123,11 +123,13 @@ func (s *aggregatorStore) List(ctx context.Context, q, feed string, limit, offse
 	return items, total, nil
 }
 
-// escapeLIKE escapes a user's search term so %, _, \ match literally.
+// escapeLIKE escapes a user's search term so %, _, ! match literally.
+// '!' is the LIKE escape character (see the ESCAPE '!' clauses): a
+// backslash escape breaks MySQL string parsing, so it is avoided.
 func escapeLIKE(s string) string {
-	s = strings.ReplaceAll(s, `\`, `\\`)
-	s = strings.ReplaceAll(s, `%`, `\%`)
-	s = strings.ReplaceAll(s, `_`, `\_`)
+	s = strings.ReplaceAll(s, `!`, `!!`)
+	s = strings.ReplaceAll(s, `%`, `!%`)
+	s = strings.ReplaceAll(s, `_`, `!_`)
 	return s
 }
 

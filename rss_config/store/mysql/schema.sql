@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS feeds (
     url         VARCHAR(2048) NOT NULL,
-    webhook_url VARCHAR(2048) NOT NULL DEFAULT '',
+    webhook_url TEXT          NOT NULL,
     active      TINYINT(1)    NOT NULL DEFAULT 1,
     created_at  DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at  DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -8,6 +8,6 @@ CREATE TABLE IF NOT EXISTS feeds (
 );
 CREATE TABLE IF NOT EXISTS settings (
     `key` VARCHAR(128)  NOT NULL,
-    value VARCHAR(2048) NOT NULL DEFAULT '',
+    value TEXT          NOT NULL DEFAULT '',
     PRIMARY KEY (`key`)
 );

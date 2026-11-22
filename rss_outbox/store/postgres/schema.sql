@@ -8,6 +8,10 @@ CREATE TABLE IF NOT EXISTS outbox (
     status        TEXT        NOT NULL DEFAULT 'pending',
     error         TEXT,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    delivered_at  TIMESTAMPTZ
+    delivered_at  TIMESTAMPTZ,
+    attempts      INTEGER     NOT NULL DEFAULT 0,
+    next_retry_at TIMESTAMPTZ,
+    PRIMARY KEY (id)
 );
 CREATE INDEX IF NOT EXISTS idx_outbox_status ON outbox(status);
+CREATE INDEX IF NOT EXISTS idx_outbox_retry ON outbox(status, next_retry_at);
