@@ -12,15 +12,42 @@ import (
 	"github.com/FKouhai/rss-demo/libs/pubsub"
 	"github.com/FKouhai/rss-outbox/store"
 	"github.com/nats-io/nats.go/jetstream"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // tracer is the service-scoped helper for outbox spans.
 var tracer = instrumentation.ForService("outbox")
 
 type Outbox struct {
-	nc          *pubsub.Client
-	store       store.Store
-	consumeCtxs []jetstream.ConsumeContext
+	nc            *pubsub.Client
+	store         store.Store
+	consumeCtxs   []jetstream.ConsumeContext
+	dispatchTotal *prometheus.CounterVec
+	ackTotal      *prometheus.CounterVec
+	poisonTotal   *prometheus.CounterVec
+	pendingItems  *prometheus.GaugeVec
+	dispatchSecs  *prometheus.HistogramVec
+}
+
+// Metrics bundles the outbox counters. All fields optional; nil entries
+// are skipped so unit tests can attach a subset or nothing at all.
+type Metrics struct {
+	DispatchTotal *prometheus.CounterVec
+	AckTotal      *prometheus.CounterVec
+	PoisonTotal   *prometheus.CounterVec
+	PendingItems  *prometheus.GaugeVec
+	DispatchSecs  *prometheus.HistogramVec
+}
+
+// WithMetrics attaches counters; nil-safe so tests can skip it.
+func (o *Outbox) WithMetrics(m *Metrics) *Outbox {
+	if m == nil {
+		return o
+	}
+	o.dispatchTotal, o.ackTotal = m.DispatchTotal, m.AckTotal
+	o.poisonTotal, o.pendingItems = m.PoisonTotal, m.PendingItems
+	o.dispatchSecs = m.DispatchSecs
+	return o
 }
 
 func NewOutbox(nc *pubsub.Client, s store.Store) *Outbox {
@@ -59,6 +86,11 @@ func (o *Outbox) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("outbox replay get pending: %w", err)
 	}
+	// Re-baseline the pending gauge: decrements can be lost when an Ack
+	// call fails after the store write, so the gauge heals on every boot.
+	if o.pendingItems != nil {
+		o.pendingItems.WithLabelValues().Set(float64(len(pending)))
+	}
 	// One root span for the whole replay so a cold start reads as a single
 	// trace instead of N orphan publishes.
 	repCtx, repSpan := tracer.Start(ctx, "outbox.Replay")
@@ -85,9 +117,33 @@ func (o *Outbox) Start(ctx context.Context) error {
 	return nil
 }
 
+func (o *Outbox) count(cv *prometheus.CounterVec, v string) {
+	if cv != nil {
+		cv.WithLabelValues(v).Inc()
+	}
+}
+
+func (o *Outbox) gaugeAdd(gv *prometheus.GaugeVec, delta float64) {
+	if gv != nil {
+		gv.WithLabelValues().Add(delta)
+	}
+}
+
+func (o *Outbox) observe(hv *prometheus.HistogramVec, label string, secs float64) {
+	if hv != nil {
+		hv.WithLabelValues(label).Observe(secs)
+	}
+}
+
 // dispatch publishes one stored entry. msgID is the row ID, so a repeated
 // dispatch of the same row dedupes at the broker.
-func (o *Outbox) dispatch(ctx context.Context, e store.Entry) error {
+func (o *Outbox) dispatch(ctx context.Context, e store.Entry) (err error) {
+	start := time.Now()
+	outcome := "published"
+	defer func() {
+		o.observe(o.dispatchSecs, outcome, time.Since(start).Seconds())
+		o.count(o.dispatchTotal, outcome)
+	}()
 	dm := pubsub.DeliveryMessage{
 		TenantID:    "default", // TODO(config service): resolve per routing rules
 		OutboxID:    e.ID,
@@ -102,11 +158,14 @@ func (o *Outbox) dispatch(ctx context.Context, e store.Entry) error {
 	}
 	payload, err := json.Marshal(dm)
 	if err != nil {
+		outcome = "marshal_error"
 		return fmt.Errorf("marshal delivery %s: %w", e.ID, err)
 	}
 	if _, err := o.nc.Publish(ctx, pubsub.SubjectNotificationRequest, payload, e.ID); err != nil {
+		outcome = "publish_error"
 		return fmt.Errorf("publish delivery %s: %w", e.ID, err)
 	}
+
 	return nil
 }
 
@@ -116,6 +175,7 @@ func (o *Outbox) dispatch(ctx context.Context, e store.Entry) error {
 func (o *Outbox) handleFeed(ctx context.Context, msg pubsub.Message) (pubsub.AckDecision, error) {
 	var item pubsub.RSSItem
 	if err := json.Unmarshal(msg.Data, &item); err != nil {
+		o.count(o.poisonTotal, "feed")
 		return pubsub.AckDecisionTerm, err
 	}
 	entry := store.Entry{
@@ -134,6 +194,7 @@ func (o *Outbox) handleFeed(ctx context.Context, msg pubsub.Message) (pubsub.Ack
 		}
 		return pubsub.AckDecisionNack, err
 	}
+	o.gaugeAdd(o.pendingItems, 1)
 	if err := o.dispatch(ctx, entry); err != nil {
 		return pubsub.AckDecisionNack, err
 	}
@@ -145,23 +206,32 @@ func (o *Outbox) handleFeed(ctx context.Context, msg pubsub.Message) (pubsub.Ack
 func (o *Outbox) handleAck(ctx context.Context, msg pubsub.Message) (pubsub.AckDecision, error) {
 	var ack pubsub.AckReply
 	if err := json.Unmarshal(msg.Data, &ack); err != nil {
+		o.count(o.poisonTotal, "ack")
 		return pubsub.AckDecisionTerm, err
 	}
 	if ack.OutboxID == "" {
+		o.count(o.poisonTotal, "ack")
 		return pubsub.AckDecisionTerm, errors.New("outbox: ack missing outbox_id")
 	}
 	var err error
+	status := string(ack.Status)
+
 	switch ack.Status {
 	case pubsub.StatusDelivered:
 		err = o.store.MarkDelivered(ctx, ack.OutboxID)
 	case pubsub.StatusSkipped:
 		err = o.store.MarkSkipped(ctx, ack.OutboxID, ack.Error)
 	default:
+		status = string(pubsub.StatusFailed)
 		err = o.store.MarkFailed(ctx, ack.OutboxID, ack.Error)
 	}
 	if err != nil {
 		return pubsub.AckDecisionNack, err
 	}
+	o.count(o.ackTotal, status)
+	// Terminal ack: the row leaves pending. The gauge re-baselines from
+	// GetPending on every restart, so a lost decrement heals on boot.
+	o.gaugeAdd(o.pendingItems, -1)
 	return pubsub.AckDecisionAck, nil
 }
 
