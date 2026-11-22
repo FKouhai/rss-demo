@@ -12,7 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/FKouhai/rss-demo/libs/metrics"
+	"github.com/FKouhai/rss-demo/libs/pubsub"
 	"github.com/mmcdole/gofeed"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace/noop"
 )
@@ -495,5 +498,91 @@ func TestKnownFeeds_PrimeNewFeeds(t *testing.T) {
 	markKnown("https://example.com/b.rss")
 	if got := unknownFeeds([]string{"https://example.com/a.rss", "https://example.com/b.rss"}); len(got) != 0 {
 		t.Fatalf("unknownFeeds after mark = %v, want empty", got)
+	}
+}
+
+func TestPollCycle_Metrics(t *testing.T) {
+	// Prime with feed A (2 items, nothing published), then introduce feed B
+	// (2 unseen items). The broker client has no JetStream, so every
+	// publish fails: the taster is attempted and counted as error.
+	// Asserts the wiring: prime/taster/error counters fire per outcome.
+	srvA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/rss+xml")
+		_, _ = w.Write([]byte(mockRSSFeedContent))
+	}))
+	defer srvA.Close()
+	feedB := strings.ReplaceAll(strings.ReplaceAll(mockRSSFeedContent, "item1", "item9"), "item2", "item8")
+	srvB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/rss+xml")
+		_, _ = w.Write([]byte(feedB))
+	}))
+	defer srvB.Close()
+
+	// Save globals; pollCycle runs on shared state.
+	oldPrimed := primed.Load()
+	seenMu.Lock()
+	oldSeen := seen
+	seen = make(map[string]bool)
+	seenMu.Unlock()
+	knownFeedsMu.Lock()
+	oldKnown := knownFeeds
+	knownFeeds = make(map[string]bool)
+	knownFeedsMu.Unlock()
+	cfgMu.Lock()
+	oldCfg := cfg
+	cfgMu.Unlock()
+	natsMu.Lock()
+	oldNc := natsClient
+	natsMu.Unlock()
+	SetMetrics(nil)
+	t.Cleanup(func() {
+		if oldPrimed {
+			primed.Store(true)
+		} else {
+			primed.Store(false)
+		}
+		seenMu.Lock()
+		seen = oldSeen
+		seenMu.Unlock()
+		knownFeedsMu.Lock()
+		knownFeeds = oldKnown
+		knownFeedsMu.Unlock()
+		cfgMu.Lock()
+		cfg = oldCfg
+		cfgMu.Unlock()
+		SetNATSClient(oldNc)
+		SetMetrics(nil)
+	})
+	primed.Store(false)
+	cfgMu.Lock()
+	cfg = ConfigStruct{RSSFeeds: []string{srvA.URL}}
+	cfgMu.Unlock()
+	SetNATSClient(&pubsub.Client{})
+
+	reg := metrics.Init("poller-test")
+	cycleItems := reg.Counter("cycle_items_total", "test cycle", "outcome")
+	fetchErrors := reg.Counter("fetch_error_total", "test fetch")
+	SetMetrics(&Metrics{CycleItems: cycleItems, FetchErrors: fetchErrors})
+
+	pollCycle(time.Now())
+	if got := testutil.ToFloat64(cycleItems.WithLabelValues("primed")); got != 2 {
+		t.Fatalf("primed = %v, want 2", got)
+	}
+	if got := testutil.ToFloat64(fetchErrors.WithLabelValues()); got != 0 {
+		t.Fatalf("fetch_error = %v, want 0", got)
+	}
+
+	cfgMu.Lock()
+	cfg = ConfigStruct{RSSFeeds: []string{srvA.URL, srvB.URL}}
+	cfgMu.Unlock()
+	pollCycle(time.Now())
+	if got := testutil.ToFloat64(cycleItems.WithLabelValues("taster")); got != 2 {
+		t.Errorf("taster = %v, want 2", got)
+	}
+	if got := testutil.ToFloat64(cycleItems.WithLabelValues("error")); got != 2 {
+		t.Errorf("error = %v, want 2 (broker has no JetStream)", got)
+	}
+	if got := testutil.ToFloat64(cycleItems.WithLabelValues("published")); got != 0 {
+		t.Errorf("published = %v, want 0 (all publishes failed)", got)
 	}
 }
