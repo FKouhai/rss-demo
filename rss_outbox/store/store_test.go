@@ -312,3 +312,135 @@ func assertEntryEqual(t *testing.T, got, want Entry) {
 		t.Errorf("DeliveredAt = %v, want %v", *got.DeliveredAt, *want.DeliveredAt)
 	}
 }
+
+func TestBackoffForAttempt(t *testing.T) {
+	cases := []struct {
+		n    int
+		want time.Duration
+	}{
+		{0, time.Minute},
+		{1, 2 * time.Minute},
+		{2, 4 * time.Minute},
+		{6, time.Hour},   // 64m capped
+		{10, time.Hour},  // way over capped
+		{100, time.Hour}, // no overflow, still capped
+	}
+	for _, c := range cases {
+		if got := BackoffForAttempt(c.n); got != c.want {
+			t.Errorf("BackoffForAttempt(%d) = %v, want %v", c.n, got, c.want)
+		}
+	}
+}
+
+func TestSave_SetsRetryFields(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	created := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
+	mustSave(t, s, ctx, entry("r1", "pending", created))
+
+	pending, err := s.GetPending(ctx)
+	if err != nil {
+		t.Fatalf("GetPending: %v", err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("want 1 row, got %d", len(pending))
+	}
+	if pending[0].Attempts != 0 {
+		t.Errorf("Attempts = %d, want 0 on save", pending[0].Attempts)
+	}
+	if pending[0].NextRetryAt == nil {
+		t.Fatal("NextRetryAt is nil, want created+InitialRetryDelay")
+	}
+	if want := created.Add(InitialRetryDelay); !pending[0].NextRetryAt.Equal(want) {
+		t.Errorf("NextRetryAt = %v, want %v", pending[0].NextRetryAt, want)
+	}
+}
+
+func TestGetDueForRetry(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	// Due: next_retry_at in the past.
+	past := entry("due-past", "pending", now.Add(-time.Hour))
+	mustSave(t, s, ctx, past)
+	if err := s.NoteAttempt(ctx, "due-past", now.Add(-time.Minute)); err != nil {
+		t.Fatalf("NoteAttempt: %v", err)
+	}
+	// Not due: next_retry_at in the future.
+	future := entry("due-future", "pending", now.Add(-time.Hour))
+	mustSave(t, s, ctx, future)
+	if err := s.NoteAttempt(ctx, "due-future", now.Add(time.Hour)); err != nil {
+		t.Fatalf("NoteAttempt: %v", err)
+	}
+	// Terminal: delivered rows never come due.
+	mustSave(t, s, ctx, entry("done", "pending", now.Add(-time.Hour)))
+	if err := s.MarkDelivered(ctx, "done"); err != nil {
+		t.Fatalf("MarkDelivered: %v", err)
+	}
+	// Legacy: pre-retry rows carry NULL next_retry_at and are due.
+	raw, ok := s.(*outboxStore)
+	if !ok {
+		t.Fatal("test store is not *outboxStore")
+	}
+	if _, err := raw.db.ExecContext(ctx,
+		`INSERT INTO outbox (id, feed_url, title, link, published_at, webhook_url, status, created_at, attempts) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, 0)`,
+		"due-legacy", "f", "t", "l", "", "w", now.Add(-2*time.Hour)); err != nil {
+		t.Fatalf("legacy insert: %v", err)
+	}
+
+	due, err := s.GetDueForRetry(ctx, now, 10)
+	if err != nil {
+		t.Fatalf("GetDueForRetry: %v", err)
+	}
+	got := map[string]bool{}
+	for _, e := range due {
+		got[e.ID] = true
+	}
+	if !got["due-past"] || !got["due-legacy"] {
+		t.Errorf("due = %v, want due-past and due-legacy", got)
+	}
+	if got["due-future"] || got["done"] {
+		t.Errorf("due = %v, want neither due-future nor done", got)
+	}
+}
+
+func TestNoteAttempt(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	mustSave(t, s, ctx, entry("n1", "pending", time.Now().UTC()))
+
+	next := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+	if err := s.NoteAttempt(ctx, "n1", next); err != nil {
+		t.Fatalf("NoteAttempt: %v", err)
+	}
+	pending, err := s.GetPending(ctx)
+	if err != nil {
+		t.Fatalf("GetPending: %v", err)
+	}
+	if pending[0].Attempts != 1 {
+		t.Errorf("Attempts = %d, want 1", pending[0].Attempts)
+	}
+	if pending[0].NextRetryAt == nil || pending[0].NextRetryAt.Before(next.Add(-time.Minute)) {
+		t.Errorf("NextRetryAt = %v, want ~%v", pending[0].NextRetryAt, next)
+	}
+	if err := s.NoteAttempt(ctx, "n1", next); err != nil {
+		t.Fatalf("NoteAttempt again: %v", err)
+	}
+	pending, _ = s.GetPending(ctx)
+	if pending[0].Attempts != 2 {
+		t.Errorf("Attempts = %d, want 2", pending[0].Attempts)
+	}
+}
+
+func TestMigrate_Idempotent(t *testing.T) {
+	// Opening the same file twice must tolerate existing columns.
+	dsn := filepath.Join(t.TempDir(), "outbox_migrate_test.db")
+	for range 2 {
+		s, err := NewConfig(Config{Driver: DriverSQLite, DSN: dsn})
+		if err != nil {
+			t.Fatalf("NewConfig: %v", err)
+		}
+		_ = s.Close()
+	}
+}

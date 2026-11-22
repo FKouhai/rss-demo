@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -72,5 +73,36 @@ func TestPlaceholders(t *testing.T) {
 	}
 	if got := Placeholders(DriverPostgres, 5, 3); got != "$5, $6, $7" {
 		t.Errorf("postgres offset = %q", got)
+	}
+}
+
+func TestIdent(t *testing.T) {
+	if got := Ident(DriverMySQL, "key"); got != "`key`" {
+		t.Errorf("mysql = %q, want backticks (KEY is reserved)", got)
+	}
+	if got := Ident(DriverPostgres, "key"); got != `"key"` {
+		t.Errorf("postgres = %q, want double quotes", got)
+	}
+	if got := Ident(DriverSQLite, "key"); got != "key" {
+		t.Errorf("sqlite = %q, want bare", got)
+	}
+}
+
+func TestEnsureMySQLParams(t *testing.T) {
+	base := "user:pw@tcp(127.0.0.1:3306)/db"
+	got := ensureMySQLParams(base)
+	for _, want := range []string{"multiStatements=true", "parseTime=true", "loc=UTC"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("dsn = %q, want %q", got, want)
+		}
+	}
+	// Existing params are preserved, never duplicated.
+	withParams := base + "?parseTime=true&charset=utf8mb4"
+	got = ensureMySQLParams(withParams)
+	if c := strings.Count(got, "parseTime=true"); c != 1 {
+		t.Errorf("dsn = %q, parseTime duplicated %d times", got, c)
+	}
+	if !strings.Contains(got, "charset=utf8mb4") || !strings.Contains(got, "multiStatements=true") {
+		t.Errorf("dsn = %q, want existing kept and missing added", got)
 	}
 }

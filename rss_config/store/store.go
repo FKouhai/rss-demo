@@ -106,7 +106,13 @@ func (s *configStore) UpsertFeed(ctx context.Context, url, webhookURL string) er
 		`INSERT INTO feeds (url, webhook_url, active, created_at, updated_at) VALUES (`+
 			db.Placeholders(s.driver, 1, 5)+`)`,
 		url, webhookURL, true, now, now)
-	return err
+	if err != nil {
+		if db.IsDuplicateKey(err) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *configStore) EnsureFeed(ctx context.Context, url string) error {
@@ -170,7 +176,7 @@ func (s *configStore) ListFeeds(ctx context.Context) ([]Feed, error) {
 func (s *configStore) GetDefaultWebhook(ctx context.Context) (string, error) {
 	var v string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT value FROM settings WHERE key = `+db.Placeholder(s.driver, 1),
+		`SELECT value FROM settings WHERE `+db.Ident(s.driver, "key")+` = `+db.Placeholder(s.driver, 1),
 		settingDefaultWebhook).Scan(&v)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -184,7 +190,7 @@ func (s *configStore) GetDefaultWebhook(ctx context.Context) (string, error) {
 func (s *configStore) SetDefaultWebhook(ctx context.Context, webhookURL string) error {
 	p := func(n int) string { return db.Placeholder(s.driver, n) }
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE settings SET value = `+p(1)+` WHERE key = `+p(2),
+		`UPDATE settings SET value = `+p(1)+` WHERE `+db.Ident(s.driver, "key")+` = `+p(2),
 		webhookURL, settingDefaultWebhook)
 	if err != nil {
 		return err
@@ -197,7 +203,7 @@ func (s *configStore) SetDefaultWebhook(ctx context.Context, webhookURL string) 
 		return nil
 	}
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO settings (key, value) VALUES (`+db.Placeholders(s.driver, 1, 2)+`)`,
+		`INSERT INTO settings (`+db.Ident(s.driver, "key")+`, value) VALUES (`+db.Placeholders(s.driver, 1, 2)+`)`,
 		settingDefaultWebhook, webhookURL)
 	return err
 }
