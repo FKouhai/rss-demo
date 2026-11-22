@@ -229,7 +229,10 @@ func ParseRSS(ctx context.Context, feedURL []string) ([]parsedFeed, error) {
 		eg.Go(func() error {
 			feedCtx, cancel := context.WithTimeout(egCtx, 8*time.Second)
 			defer cancel()
-			_, feedSpan := tracer.Start(feedCtx, "helper.ParseSingleFeed")
+			// Keep the span ctx: the failure log below must carry
+			// trace_id so Loki `|= trace_id` finds it next to the
+			// "got feed" line (Debug never leaves the collector).
+			feedCtx, feedSpan := tracer.Start(feedCtx, "helper.ParseSingleFeed")
 			feedSpan.SetAttributes(attribute.String("feed.url", v))
 			defer feedSpan.End()
 			feedParser := gofeed.NewParser()
@@ -238,7 +241,7 @@ func ParseRSS(ctx context.Context, feedURL []string) ([]parsedFeed, error) {
 			if err != nil {
 				span.AddEvent("FAILED_PROCESS_FEED")
 				feedSpan.RecordError(err)
-				log.DebugCtx(feedCtx, "feed failed, skipping", zap.String("url", v), zap.Error(err))
+				log.ErrorCtx(feedCtx, "feed failed, skipping", zap.String("url", v), zap.Error(err))
 				return nil
 			}
 			feeds[i] = feed
