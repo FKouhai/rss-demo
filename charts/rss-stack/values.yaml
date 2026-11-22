@@ -40,6 +40,17 @@ nats:
   # (follow-up). Values accepted, chart warns, nothing is mounted.
   # authSecret: ""
 
+# Prometheus Operator scraping of every service's /metrics endpoint.
+# Disabled by default: enabling without the monitoring.coreos.com CRDs
+# installed fails the release, so the template also guards on the
+# API version. additionalLabels selects the monitor for your Prometheus
+# (kube-prometheus-stack defaults to {release: <stack-release>}).
+monitoring:
+  enabled: false
+  interval: 30s
+  scrapeTimeout: 10s
+  additionalLabels: {}
+
 # Existing Secrets only — never plaintext values in values files.
 secrets:
   # Key "webhook-url" -> DEFAULT_WEBHOOK_URL (poller fallback).
