@@ -27,6 +27,7 @@ import (
 	"github.com/FKouhai/rss-demo/libs/auth"
 	db "github.com/FKouhai/rss-demo/libs/db"
 	log "github.com/FKouhai/rss-demo/libs/logger"
+	"github.com/FKouhai/rss-demo/libs/metrics"
 	"github.com/FKouhai/rss-demo/libs/service"
 )
 
@@ -85,6 +86,11 @@ func Run(ctx context.Context, cfg Config) (*App, error) {
 	log.InfoFmt("Config store initialized (driver=%s)", cfg.DBDriver)
 	handlers.SetStore(s)
 	handlers.SetAuth(cfg.GatewaySecret != "", cfg.AdminGroups)
+	reg := metrics.Init("config")
+	handlers.SetMetrics(&handlers.Metrics{
+		UpsertTotal: reg.Counter("upsert_total", "config feed upserts", "outcome"),
+		FeedsCount:  reg.Gauge("feeds_count", "config feeds configured"),
+	})
 
 	if cfg.GatewaySecret == "" {
 		log.InfoFmt("CONFIG_GATEWAY_SECRET unset: running in open mode")
@@ -114,7 +120,7 @@ func Run(ctx context.Context, cfg Config) (*App, error) {
 	open := cfg.GatewaySecret == ""
 	handler := auth.Middleware(auth.Config{GatewaySecret: cfg.GatewaySecret, SkipAuth: open}, mux)
 
-	srv, err := service.ServeHTTP(cfg.HTTPAddr, handler, "rss_config")
+	srv, err := service.ServeHTTP(cfg.HTTPAddr, handler, "rss_config", reg.Handler())
 	if err != nil {
 		app.shutdown(context.Background())
 		return nil, fmt.Errorf("listen %s: %w", cfg.HTTPAddr, err)
