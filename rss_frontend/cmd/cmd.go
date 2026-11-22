@@ -18,6 +18,7 @@ import (
 
 	"github.com/FKouhai/rss-demo/libs/auth/oidc"
 	log "github.com/FKouhai/rss-demo/libs/logger"
+	"github.com/FKouhai/rss-demo/libs/metrics"
 	"github.com/FKouhai/rss-demo/libs/service"
 	"github.com/FKouhai/rss-frontend/handlers"
 	"github.com/FKouhai/rss-frontend/internal/extract"
@@ -110,6 +111,11 @@ func Run(ctx context.Context, cfg Config) (*App, error) {
 	}
 	app.oidc = oc
 
+	reg := metrics.Init("frontend")
+	extract.SetMetrics(&extract.Metrics{
+		FetchTotal: reg.Counter("extract_total", "frontend article extractions", "outcome"),
+		FetchSecs:  reg.Histogram("extract_duration_seconds", "frontend article extract latency", nil, "outcome"),
+	})
 	proxyHTTP := &http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}
 	deps := handlers.Deps{
 		Items:         handlers.AggClient(cfg.AggregatorURL, proxyHTTP),
@@ -129,7 +135,7 @@ func Run(ctx context.Context, cfg Config) (*App, error) {
 	mux := http.NewServeMux()
 	handlers.Register(mux, deps)
 
-	srv, err := service.ServeHTTP(cfg.HTTPAddr, mux, "rss_frontend")
+	srv, err := service.ServeHTTP(cfg.HTTPAddr, mux, "rss_frontend", reg.Handler())
 	if err != nil {
 		app.shutdown(context.Background())
 		return nil, fmt.Errorf("listen %s: %w", cfg.HTTPAddr, err)
