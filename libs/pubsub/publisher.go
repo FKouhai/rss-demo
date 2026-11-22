@@ -10,6 +10,9 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/propagation"
+
+	log "github.com/FKouhai/rss-demo/libs/logger"
+	"go.uber.org/zap"
 )
 
 // Publish wrapper for producers
@@ -50,6 +53,8 @@ func (c *Client) Publish(ctx context.Context, subject string, payload []byte, ms
 	ack, err := c.JsContext.PublishMsg(spanCtx, msg)
 	if err != nil {
 		span.RecordError(err)
+		log.ErrorCtx(spanCtx, "nats publish failed",
+			zap.String("subject", subject), zap.String("msg_id", msgID), zap.Error(err))
 		return nil, err
 	}
 	span.SetAttributes(

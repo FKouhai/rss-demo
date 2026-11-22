@@ -179,7 +179,8 @@ func invokeHandler(spanCtx context.Context, span trace.Span, handler MessageHand
 			hErr = errors.New("handler panic")
 			decision = AckDecisionNack
 			span.RecordError(hErr)
-			log.ErrorFmt("consume handler panic recovered: %v", r)
+			log.ErrorFmt("consume handler panic recovered: trace_id=%s: %v",
+				span.SpanContext().TraceID(), r)
 		}
 	}()
 	return handler(spanCtx, Message{
@@ -214,22 +215,26 @@ func applyAckDecision(span trace.Span, decision AckDecision, hErr error, msg jet
 	}
 }
 
-// recordAckErr records a failed ACK call on the span and logs it.
+// recordAckErr records a failed ACK call on the span and logs it with the
+// trace_id so Loki joins it to the trace under head sampling.
 func recordAckErr(span trace.Span, err error, kind string) {
 	if err == nil {
 		return
 	}
 	span.RecordError(err)
-	log.ErrorFmt("failed to %s message: %v", kind, err)
+	log.ErrorFmt("failed to %s message: trace_id=%s: %v",
+		kind, span.SpanContext().TraceID(), err)
 }
 
 // recordHandlerErr records a handler-returned error on the span and logs
-// it. Logs matter here: a Nack without a log line is invisible everywhere
-// except Jaeger, which once hid a sqlite-locking outage behind clean logs.
+// it with the trace_id. Logs matter here: a Nack without a log line is
+// invisible everywhere except Jaeger, which once hid a sqlite-locking
+// outage behind clean logs.
 func recordHandlerErr(span trace.Span, err error) {
 	if err != nil {
 		span.RecordError(err)
-		log.ErrorFmt("consume handler error: %v", err)
+		log.ErrorFmt("consume handler error: trace_id=%s: %v",
+			span.SpanContext().TraceID(), err)
 	}
 }
 
