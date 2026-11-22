@@ -46,25 +46,20 @@ func (d *DiscordNotification) SendNotification(ctx context.Context, message []st
 		span.AddLink(l)
 	}
 
-	log.DebugCtx(ctx, "[TRACE] SendNotification: incoming trace context",
-		zap.String("webhook_url", d.WebHookURL))
-
 	m, err := d.toDiscordMessage(spanCtx, message)
 	if err != nil {
 		span.RecordError(err)
+		log.ErrorCtx(spanCtx, "webhook marshal failed", zap.Error(err))
 		return 0, err
 	}
 	r := bytes.NewBuffer(m)
 	req, err := http.NewRequestWithContext(spanCtx, "POST", d.WebHookURL, r)
 	if err != nil {
 		span.RecordError(err)
-		log.InfoCtx(ctx, "Failed to make request")
+		log.ErrorCtx(spanCtx, "webhook request build failed", zap.Error(err))
 		return 0, err
 	}
 	req.Header.Add("Content-Type", "application/json")
-
-	log.DebugCtx(ctx, "[TRACE] SendNotification: request traceparent header",
-		zap.String("traceparent", req.Header.Get("traceparent")))
 
 	client := &http.Client{
 		Timeout:   10 * time.Second,
@@ -73,7 +68,7 @@ func (d *DiscordNotification) SendNotification(ctx context.Context, message []st
 	res, err := client.Do(req)
 	if err != nil {
 		span.RecordError(err)
-		log.InfoCtx(ctx, "Request was unsuccesful")
+		log.ErrorCtx(spanCtx, "webhook POST failed", zap.Error(err))
 		return http.StatusInternalServerError, err
 	}
 	// nolint
@@ -81,33 +76,34 @@ func (d *DiscordNotification) SendNotification(ctx context.Context, message []st
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		span.RecordError(err)
+		log.ErrorCtx(spanCtx, "webhook response read failed", zap.Error(err))
 		return http.StatusInternalServerError, err
 	}
 	span.SetAttributes(attribute.Int("webhook.status", res.StatusCode), attribute.Int("response.size", len(body)))
 
-	log.DebugCtx(ctx, "[TRACE] SendNotification: webhook response",
-		zap.Int("status_code", res.StatusCode))
-	log.InfoFmtCtx(ctx, "webhook response: %v", string(body))
+	log.InfoCtx(spanCtx, "webhook response", zap.Int("status_code", res.StatusCode))
 	return res.StatusCode, nil
 }
 
 func (d *DiscordNotification) toDiscordMessage(ctx context.Context, message []string) ([]byte, error) {
-	_, span := tracer.Start(ctx, "webhookPush.toDiscordMessage")
+	msgCtx, span := tracer.Start(ctx, "webhookPush.toDiscordMessage")
 	defer span.End()
 	span.AddEvent("MARSHALING_MESSAGE")
 	if len(message) == 0 {
 		err := fmt.Errorf("no messages to send")
 		span.RecordError(err)
+		log.ErrorCtx(msgCtx, "webhook marshal failed: empty batch")
 		return nil, err
 	}
 	dm := DiscordMessage{
 		Content: message[0],
 	}
 
-	log.InfoFmt("payload: %v", dm.Content) // TODO: add trace_id
+	log.InfoCtx(msgCtx, "webhook payload built", zap.Int("message.size", len(dm.Content)))
 	b, err := json.Marshal(&dm)
 	if err != nil {
 		span.RecordError(err)
+		log.ErrorCtx(msgCtx, "webhook marshal failed", zap.Error(err))
 		return nil, err
 	}
 	span.SetAttributes(attribute.Int("message.size", len(b)))
