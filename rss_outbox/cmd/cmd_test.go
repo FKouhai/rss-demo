@@ -9,8 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/FKouhai/rss-demo/libs/metrics"
 	"github.com/FKouhai/rss-demo/libs/pubsub"
 	"github.com/FKouhai/rss-outbox/store"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	_ "modernc.org/sqlite"
 )
 
@@ -313,5 +315,50 @@ func TestHandleAck_Skipped(t *testing.T) {
 	}
 	if st.Skipped != 1 || st.Pending != 0 {
 		t.Errorf("Status = %+v, want 1 skipped / 0 pending", st)
+	}
+}
+
+// TestHandleAck_Metrics proves the ack path is plugged into the registry:
+// the terminal ack increments ack_total and releases the pending gauge.
+// Lib tests prove the instruments work; this proves outbox calls them.
+func TestHandleAck_Metrics(t *testing.T) {
+	ob := newTestOutbox(t)
+	ctx := context.Background()
+	reg := metrics.Init("outbox-test")
+	ackTotal := reg.Counter("ack_total", "test acks", "status")
+	pendingItems := reg.Gauge("pending_items", "test pending")
+	ob.WithMetrics(&Metrics{
+		AckTotal:     ackTotal,
+		PendingItems: pendingItems,
+	})
+	if _, err := ob.store.Save(ctx, store.Entry{ID: "m1", Status: "pending"}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	// Mirror the +1 handleFeed would have recorded on Save.
+	pendingItems.WithLabelValues().Set(1)
+	raw, _ := json.Marshal(pubsub.AckReply{TenantID: "default", OutboxID: "m1", Status: pubsub.StatusDelivered})
+	if _, err := ob.handleAck(ctx, pubsub.Message{Data: raw}); err != nil {
+		t.Fatalf("handleAck: %v", err)
+	}
+	if got := testutil.ToFloat64(ackTotal.WithLabelValues("delivered")); got != 1 {
+		t.Errorf("ack_total{delivered} = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(pendingItems.WithLabelValues()); got != 0 {
+		t.Errorf("pending_items = %v, want 0 after terminal ack", got)
+	}
+}
+
+// TestHandleFeed_PoisonMetrics proves poison Terms are counted, not just
+// logged: the feed-unmarshal Term increments poison_total{source=feed}.
+func TestHandleFeed_PoisonMetrics(t *testing.T) {
+	ob := newTestOutbox(t)
+	reg := metrics.Init("outbox-test")
+	poisonTotal := reg.Counter("poison_total", "test poison", "source")
+	ob.WithMetrics(&Metrics{PoisonTotal: poisonTotal})
+	if _, err := ob.handleFeed(context.Background(), pubsub.Message{Data: []byte("not json")}); err == nil {
+		t.Fatal("expected unmarshal error, got nil")
+	}
+	if got := testutil.ToFloat64(poisonTotal.WithLabelValues("feed")); got != 1 {
+		t.Errorf("poison_total{feed} = %v, want 1", got)
 	}
 }

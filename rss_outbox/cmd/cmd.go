@@ -17,6 +17,7 @@ import (
 	"time"
 
 	log "github.com/FKouhai/rss-demo/libs/logger"
+	"github.com/FKouhai/rss-demo/libs/metrics"
 	"github.com/FKouhai/rss-demo/libs/pubsub"
 	"github.com/FKouhai/rss-demo/libs/service"
 	"github.com/FKouhai/rss-outbox/handlers"
@@ -67,6 +68,12 @@ func Run(ctx context.Context, cfg Config) (*App, error) {
 		return nil, err
 	}
 	app.Boot = boot
+	reg := metrics.Init("outbox")
+	dispatchTotal := reg.Counter("dispatch_total", "outbox dispatches", "outcome")
+	ackTotal := reg.Counter("ack_total", "outbox acks applied", "status")
+	poisonTotal := reg.Counter("poison_total", "outbox poison messages termed", "source")
+	pendingItems := reg.Gauge("pending_items", "outbox rows awaiting terminal ack")
+	dispatchSecs := reg.Histogram("dispatch_duration_seconds", "outbox dispatch latency", nil, "outcome")
 
 	client, err := pubsub.DialWithRetry(ctx, cfg.NATSURL, pubsub.RssOptions{ServiceName: "outbox"}, cfg.NATSRetryBudget)
 	if err != nil {
@@ -90,7 +97,13 @@ func Run(ctx context.Context, cfg Config) (*App, error) {
 	// subscriptions are established. Skipped when NATS is unavailable so
 	// offline tests and degraded boots still serve HTTP.
 	if app.nc != nil {
-		ob := NewOutbox(app.nc, s)
+		ob := NewOutbox(app.nc, s).WithMetrics(&Metrics{
+			DispatchTotal: dispatchTotal,
+			AckTotal:      ackTotal,
+			PoisonTotal:   poisonTotal,
+			PendingItems:  pendingItems,
+			DispatchSecs:  dispatchSecs,
+		})
 		if err := ob.Start(ctx); err != nil {
 			app.shutdown(context.Background())
 			return nil, fmt.Errorf("outbox start: %w", err)
@@ -113,9 +126,10 @@ func Run(ctx context.Context, cfg Config) (*App, error) {
 		}
 		handlers.ReadyHandler(w, r)
 	})
+
 	mux.HandleFunc("/outbox/status", handlers.OutboxStatusHandler)
 
-	srv, err := service.ServeHTTP(cfg.HTTPAddr, mux, "rss_outbox")
+	srv, err := service.ServeHTTP(cfg.HTTPAddr, mux, "rss_outbox", reg.Handler())
 	if err != nil {
 		app.shutdown(context.Background())
 		return nil, fmt.Errorf("listen %s: %w", cfg.HTTPAddr, err)
