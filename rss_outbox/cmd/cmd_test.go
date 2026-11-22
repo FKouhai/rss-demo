@@ -362,3 +362,136 @@ func TestHandleFeed_PoisonMetrics(t *testing.T) {
 		t.Errorf("poison_total{feed} = %v, want 1", got)
 	}
 }
+
+func TestHandleFeed_NoteAttemptOnDispatchFailure(t *testing.T) {
+	// No JetStream: Save succeeds, Publish fails. The attempt is still
+	// recorded so the row's next drive comes from the sweeper, and the
+	// redelivery lands on the duplicate-Save branch without recounting.
+	s, err := store.NewConfig(store.Config{
+		Driver: store.DriverSQLite,
+		DSN:    filepath.Join(t.TempDir(), "outbox_attempt_test.db"),
+	})
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	reg := metrics.Init("outbox-test")
+	dispatchTotal := reg.Counter("dispatch_total", "test dispatches", "outcome")
+	ob := NewOutbox(&pubsub.Client{}, s).WithMetrics(&Metrics{DispatchTotal: dispatchTotal})
+	ctx := context.Background()
+	raw, _ := json.Marshal(pubsub.RSSItem{
+		FeedURL: "https://example.com/rss", Title: "T",
+		Link: "https://example.com/1", PublishedAt: "2026-11-22T00:00:00Z",
+	})
+	decision, err := ob.handleFeed(ctx, pubsub.Message{Data: raw})
+	if err == nil {
+		t.Fatal("expected publish error (no JetStream), got nil")
+	}
+	if decision != pubsub.AckDecisionNack {
+		t.Errorf("decision = %v, want Nack", decision)
+	}
+	if got := testutil.ToFloat64(dispatchTotal.WithLabelValues("publish_error")); got != 1 {
+		t.Errorf("dispatch_total{publish_error} = %v, want 1", got)
+	}
+	pending, err := s.GetPending(ctx)
+	if err != nil {
+		t.Fatalf("GetPending: %v", err)
+	}
+	if len(pending) != 1 || pending[0].Attempts != 1 {
+		t.Fatalf("row attempts = %+v, want one row at 1", pending)
+	}
+	if pending[0].NextRetryAt == nil {
+		t.Error("NextRetryAt is nil, want InitialRetryDelay scheduled")
+	}
+	// Redelivery hits the duplicate branch: Ack, no recount, no re-drive.
+	decision, err = ob.handleFeed(ctx, pubsub.Message{Data: raw})
+	if err != nil {
+		t.Fatalf("redelivery handleFeed: %v", err)
+	}
+	if decision != pubsub.AckDecisionAck {
+		t.Errorf("redelivery decision = %v, want Ack", decision)
+	}
+	pending, _ = s.GetPending(ctx)
+	if pending[0].Attempts != 1 {
+		t.Errorf("attempts after redelivery = %d, want still 1", pending[0].Attempts)
+	}
+}
+
+func TestSweepOnce_RedrivesAndExhausts(t *testing.T) {
+	s, err := store.NewConfig(store.Config{
+		Driver: store.DriverSQLite,
+		DSN:    filepath.Join(t.TempDir(), "outbox_sweep_test.db"),
+	})
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	reg := metrics.Init("outbox-test")
+	dispatchTotal := reg.Counter("dispatch_total", "test dispatches", "outcome")
+	ackTotal := reg.Counter("ack_total", "test acks", "status")
+	pendingItems := reg.Gauge("pending_items", "test pending")
+	ob := NewOutbox(&pubsub.Client{}, s).WithMetrics(&Metrics{
+		DispatchTotal: dispatchTotal, AckTotal: ackTotal, PendingItems: pendingItems,
+	})
+	ctx := context.Background()
+	// One fresh row (due in the past via NoteAttempt) and one exhausted row.
+	mustSave := func(id string) {
+		t.Helper()
+		if _, err := s.Save(ctx, store.Entry{ID: id, Status: "pending", CreatedAt: time.Now().UTC()}); err != nil {
+			t.Fatalf("Save %s: %v", id, err)
+		}
+	}
+	mustSave("sweep-due")
+	mustSave("sweep-dead")
+	past := time.Now().UTC().Add(-time.Minute)
+	if err := s.NoteAttempt(ctx, "sweep-due", past); err != nil {
+		t.Fatalf("NoteAttempt: %v", err)
+	}
+	for range store.MaxAttempts {
+		if err := s.NoteAttempt(ctx, "sweep-dead", past); err != nil {
+			t.Fatalf("NoteAttempt: %v", err)
+		}
+	}
+	pendingItems.WithLabelValues().Set(2)
+
+	ob.sweepOnce(ctx)
+
+	// Due row: re-driven (publish fails, no broker) and rescheduled.
+	due, err := s.GetPending(ctx)
+	if err != nil {
+		t.Fatalf("GetPending: %v", err)
+	}
+	byID := map[string]store.Entry{}
+	for _, e := range due {
+		byID[e.ID] = e
+	}
+	if byID["sweep-due"].Attempts != 2 {
+		t.Errorf("sweep-due attempts = %d, want 2 (1 setup + 1 sweep)", byID["sweep-due"].Attempts)
+	}
+	if byID["sweep-due"].NextRetryAt == nil || !byID["sweep-due"].NextRetryAt.After(time.Now().UTC()) {
+		t.Errorf("sweep-due next = %v, want future backoff", byID["sweep-due"].NextRetryAt)
+	}
+	if got := testutil.ToFloat64(dispatchTotal.WithLabelValues("publish_error")); got != 1 {
+		t.Errorf("dispatch_total{publish_error} = %v, want 1", got)
+	}
+	// Exhausted row: terminal failed, out of pending, gauge released.
+	st, err := s.Status(ctx)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if st.Failed != 1 || st.Pending != 1 {
+		t.Errorf("Status = %+v, want 1 failed / 1 pending", st)
+	}
+	if got := testutil.ToFloat64(ackTotal.WithLabelValues("failed")); got != 1 {
+		t.Errorf("ack_total{failed} = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(pendingItems.WithLabelValues()); got != 1 {
+		t.Errorf("pending_items = %v, want 1", got)
+	}
+
+	// Second sweep: nothing due (backoff in the future), no-op.
+	ob.sweepOnce(ctx)
+	if got := testutil.ToFloat64(dispatchTotal.WithLabelValues("publish_error")); got != 1 {
+		t.Errorf("dispatch_total after quiet sweep = %v, want still 1", got)
+	}
+}
