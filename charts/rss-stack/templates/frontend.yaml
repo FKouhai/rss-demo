@@ -18,6 +18,10 @@ spec:
         {{- include "rss-stack.labels" . | nindent 8 }}
         app.kubernetes.io/name: rss-frontend
     spec:
+      {{- with .Values.global.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: frontend
           image: {{ include "rss-stack.image" (dict "root" $ "tag" $svc.tag "repository" $svc.repository) }}
@@ -116,9 +120,14 @@ metadata:
   labels:
     {{- include "rss-stack.labels" . | nindent 4 }}
     app.kubernetes.io/name: rss-frontend
-  {{- with .Values.ingress.className }}
+  {{- if or .Values.ingress.className .Values.ingress.annotations }}
   annotations:
+    {{- with .Values.ingress.className }}
     kubernetes.io/ingress.class: {{ . | quote }}
+    {{- end }}
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
   {{- end }}
 spec:
   {{- if .Values.ingress.tls.enabled }}

@@ -35,6 +35,10 @@ spec:
         {{- include "rss-stack.labels" . | nindent 8 }}
         app.kubernetes.io/name: rss-aggregator
     spec:
+      {{- with .Values.global.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: aggregator
           image: {{ include "rss-stack.image" (dict "root" $ "tag" $svc.tag "repository" $svc.repository) }}

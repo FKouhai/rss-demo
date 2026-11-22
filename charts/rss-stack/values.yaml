@@ -5,6 +5,14 @@
 global:
   # Registry + org holding the service images (ghcr.io/<owner>).
   imageRegistry: ghcr.io/fkouhai
+  # Scheduling constraints applied to every Go service pod
+  # (e.g. {"kubernetes.io/arch": "amd64"} for per-arch image tags).
+  nodeSelector: {}
+
+# Standard Helm naming overrides. fullnameOverride replaces the
+# "<release>-<chart>" base outright (e.g. short, cluster-unique names).
+nameOverride: ""
+fullnameOverride: ""
 
 # OTEL collector endpoint. Required, no default: rendering without it
 # would silently drop traces.
@@ -33,6 +41,8 @@ secrets:
 ingress:
   enabled: false
   className: ""
+  # Extra annotations (e.g. cert-manager.io/cluster-issuer).
+  annotations: {}
   host: rss.local
   tls:
     enabled: false

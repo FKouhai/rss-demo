@@ -1,6 +1,25 @@
-{{/* Release-scoped base name, DNS-safe. */}}
+{{/* Expand the chart name, honouring an override. */}}
+{{- define "rss-stack.name" -}}
+{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{/*
+Release-scoped base name, DNS-safe. Standard Helm semantics: an
+explicit fullnameOverride wins; otherwise a release named like the
+chart (e.g. nixidy's rss-stack release of the rss-stack chart)
+collapses to just the release name instead of "rss-stack-rss-stack".
+*/}}
 {{- define "rss-stack.fullname" -}}
-{{- printf "%s-%s" .Release.Name .Chart.Name | trunc 63 | trimSuffix "-" -}}
+{{- if .Values.fullnameOverride -}}
+{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- $name := default .Chart.Name .Values.nameOverride -}}
+{{- if contains $name .Release.Name -}}
+{{- .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+{{- end -}}
 {{- end -}}
 
 {{/* Standard labels. */}}
