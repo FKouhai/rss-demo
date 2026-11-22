@@ -390,6 +390,13 @@ func TestPublishedAt(t *testing.T) {
 	if got := publishedAt(raw); got != "Mon, 06 May 2024 12:30:00 GMT" {
 		t.Errorf("raw date = %q, want passthrough", got)
 	}
+	// UpdatedParsed covers feeds that only carry an updated timestamp;
+	// without it the raw value leaks into the store and breaks the
+	// aggregator's lexicographic date ordering.
+	upd := &gofeed.Item{PublishedParsed: nil, UpdatedParsed: &ts, Published: "Mon, 06 May 2024 12:30:00 GMT"}
+	if got := publishedAt(upd); got != "2024-05-06T12:30:00Z" {
+		t.Errorf("updated date = %q, want RFC3339", got)
+	}
 }
 
 func TestFeedURLs(t *testing.T) {

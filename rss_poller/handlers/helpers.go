@@ -251,8 +251,14 @@ type feedItem struct {
 }
 
 func publishedAt(it *gofeed.Item) string {
+	// Normalized to RFC3339 so downstream ORDER BY published_at (a
+	// plain TEXT column) sorts chronologically. Raw feed dates mix
+	// RFC822 and RFC3339, which breaks lexicographic ordering.
 	if it.PublishedParsed != nil {
 		return it.PublishedParsed.UTC().Format(time.RFC3339)
+	}
+	if it.UpdatedParsed != nil {
+		return it.UpdatedParsed.UTC().Format(time.RFC3339)
 	}
 	return it.Published
 }
