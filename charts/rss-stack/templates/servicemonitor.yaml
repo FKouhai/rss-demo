@@ -1,0 +1,26 @@
+{{- if and .Values.monitoring.enabled (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1") }}
+{{- $name := include "rss-stack.fullname" . }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "rss-stack.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  # All six Go services carry part-of=rss-stack + this release's
+  # instance label and expose their /metrics on the port named http
+  # (frontend serves 4321 behind Service port 80, same name).
+  # NATS is intentionally excluded: no /metrics there.
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: rss-stack
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.monitoring.interval | quote }}
+      scrapeTimeout: {{ .Values.monitoring.scrapeTimeout | quote }}
+{{- end }}
