@@ -24,6 +24,7 @@ import (
 	"github.com/FKouhai/rss-aggregator/store"
 	db "github.com/FKouhai/rss-demo/libs/db"
 	log "github.com/FKouhai/rss-demo/libs/logger"
+	"github.com/FKouhai/rss-demo/libs/metrics"
 	"github.com/FKouhai/rss-demo/libs/pubsub"
 	"github.com/FKouhai/rss-demo/libs/service"
 )
@@ -94,8 +95,12 @@ func Run(ctx context.Context, cfg Config) (*App, error) {
 	// (not in main) so Ready — which fires at listen time below — implies
 	// the subscription is established. Skipped when NATS is unavailable so
 	// offline tests and degraded boots still serve HTTP.
+	reg := metrics.Init("aggregator")
 	if app.nc != nil {
-		ag := NewAggregator(app.nc, s)
+		ag := NewAggregator(app.nc, s).WithMetrics(&Metrics{
+			SaveTotal:   reg.Counter("save_total", "aggregator items persisted", "outcome"),
+			PoisonTotal: reg.Counter("poison_total", "aggregator poison items termed", "source"),
+		})
 		if err := ag.Start(ctx); err != nil {
 			app.shutdown(context.Background())
 			return nil, fmt.Errorf("aggregator start: %w", err)
@@ -122,7 +127,7 @@ func Run(ctx context.Context, cfg Config) (*App, error) {
 	mux.HandleFunc("/api/items/{id}", handlers.ItemHandler)
 	mux.HandleFunc("/api/feeds", handlers.FeedsHandler)
 
-	srv, err := service.ServeHTTP(cfg.HTTPAddr, mux, "rss_aggregator")
+	srv, err := service.ServeHTTP(cfg.HTTPAddr, mux, "rss_aggregator", reg.Handler())
 	if err != nil {
 		app.shutdown(context.Background())
 		return nil, fmt.Errorf("listen %s: %w", cfg.HTTPAddr, err)
