@@ -66,9 +66,11 @@ func Register(mux *http.ServeMux, d Deps) {
 	mux.Handle("GET /partials/status", guard(http.HandlerFunc(d.statusPartial)))
 	mux.Handle("GET /config", guard(http.HandlerFunc(d.configHandler)))
 	mux.Handle("POST /config/feeds", guard(http.HandlerFunc(d.configAddHandler)))
+	mux.Handle("POST /config/import/confirm", guard(http.HandlerFunc(d.configImportConfirmHandler)))
 	mux.Handle("DELETE /config/feeds", guard(http.HandlerFunc(d.configDeleteHandler)))
 	mux.Handle("POST /config/default-webhook", guard(http.HandlerFunc(d.configDefaultHandler)))
 	mux.Handle("GET /img", guard(http.HandlerFunc(d.imgHandler)))
+	mux.Handle("POST /config/import", guard(http.HandlerFunc(d.configImportHandler)))
 
 	if d.AuthEnabled && d.OIDC != nil {
 		mux.HandleFunc("GET /auth/login", d.loginHandler)

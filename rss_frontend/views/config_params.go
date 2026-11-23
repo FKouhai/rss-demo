@@ -26,3 +26,18 @@ type ConfigParams struct {
 	ConfigFeeds    []ConfigFeed
 	DefaultWebhook string
 }
+
+// ImportFeed is one OPML entry classified for the import preview.
+type ImportFeed struct {
+	URL   string
+	Title string
+}
+
+// ImportPreview is the pre-confirm state of an OPML import: New feeds
+// will be added on confirm, Existing are already configured, Invalid
+// failed validation and are dropped.
+type ImportPreview struct {
+	New      []ImportFeed
+	Existing []string
+	Invalid  []string
+}

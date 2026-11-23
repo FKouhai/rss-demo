@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -14,6 +15,7 @@ type fakeConfig struct {
 	urls     []string
 	received []receivedCall
 	secret   string
+	hooks    []string
 }
 
 type receivedCall struct {
@@ -39,6 +41,10 @@ func (f *fakeConfig) handler() http.HandlerFunc {
 		case r.Method == http.MethodDelete:
 			_, _ = w.Write([]byte(`{"deleted":true}`))
 		case r.Method == http.MethodPut:
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/hooks/update":
+			body, _ := io.ReadAll(r.Body)
+			f.hooks = append(f.hooks, string(body))
 			_, _ = w.Write([]byte(`{}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)

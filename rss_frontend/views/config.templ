@@ -51,6 +51,12 @@ templ Config(p ConfigParams) {
 					<input class="field" type="url" name="webhook_url" placeholder="override webhook (optional)" size="40"/>
 					<button class="btn" type="submit">Add</button>
 				</form>
+				<h3 class="subhead">Import OPML</h3>
+				<form class="formrow" hx-post="/config/import" hx-target="#config-import-preview" hx-swap="outerHTML" hx-encoding="multipart/form-data">
+					<input class="field" type="file" name="opml" accept=".opml,.xml,text/xml" required/>
+					<button class="btn" type="submit">Preview</button>
+				</form>
+				<div id="config-import-preview"></div>
 			}
 		}
 	}
@@ -87,5 +93,57 @@ templ ConfigTable(p ConfigParams) {
 				}
 			</tbody>
 		</table>
+	</div>
+}
+
+// ConfigImportPreview renders an OPML import preview: what confirm
+// would add, what is already configured, and what failed validation.
+// Confirm posts the new URLs back to /config/import/confirm, which
+// returns the refreshed ConfigTable like every other mutation.
+templ ConfigImportPreview(p ImportPreview) {
+	<div id="config-import-preview">
+		<p>
+			<strong>{ itoa(len(p.New)) } new</strong>, { itoa(len(p.Existing)) } already configured,
+			{ itoa(len(p.Invalid)) } invalid.
+		</p>
+		if len(p.New) > 0 {
+			<form hx-post="/config/import/confirm" hx-target="#config-feeds" hx-swap="outerHTML">
+				<table class="ledger">
+					<thead><tr><th>Feed</th><th>Title</th></tr></thead>
+					<tbody>
+						for _, f := range p.New {
+							<tr>
+								<td><code>{ f.URL }</code></td>
+								<td>{ f.Title }</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+				for _, f := range p.New {
+					<input type="hidden" name="url" value={ f.URL }/>
+				}
+				<button class="btn" type="submit">Import { itoa(len(p.New)) } feeds</button>
+			</form>
+		}
+		if len(p.Existing) > 0 {
+			<details>
+				<summary>Already configured ({ itoa(len(p.Existing)) })</summary>
+				<ul>
+					for _, u := range p.Existing {
+						<li><code>{ u }</code></li>
+					}
+				</ul>
+			</details>
+		}
+		if len(p.Invalid) > 0 {
+			<details>
+				<summary>Invalid, skipped ({ itoa(len(p.Invalid)) })</summary>
+				<ul>
+					for _, u := range p.Invalid {
+						<li><code>{ u }</code></li>
+					}
+				</ul>
+			</details>
+		}
 	</div>
 }

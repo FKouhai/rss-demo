@@ -197,7 +197,7 @@ func (d Deps) configAddHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing url", http.StatusBadRequest)
 		return
 	}
-	if u, err := url.Parse(feedURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+	if !validFeedURL(feedURL) {
 		http.Error(w, "url must be an http(s) URL", http.StatusBadRequest)
 		return
 	}
