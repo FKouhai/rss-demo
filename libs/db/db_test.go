@@ -2,8 +2,10 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	_ "modernc.org/sqlite"
 )
@@ -104,5 +106,49 @@ func TestEnsureMySQLParams(t *testing.T) {
 	}
 	if !strings.Contains(got, "charset=utf8mb4") || !strings.Contains(got, "multiStatements=true") {
 		t.Errorf("dsn = %q, want existing kept and missing added", got)
+	}
+}
+
+func TestMigrate_AppliesInOrderAndIdempotent(t *testing.T) {
+	fsys := fstest.MapFS{
+		"001_init.sql": {Data: []byte(`CREATE TABLE t (id TEXT PRIMARY KEY, v TEXT);
+CREATE INDEX idx_t_v ON t(v);`)},
+		"002_add.sql": {Data: []byte(`ALTER TABLE t ADD COLUMN w TEXT;
+CREATE INDEX idx_t_w ON t(w);`)},
+		"notes.txt": {Data: []byte("ignored")},
+	}
+	db, err := sql.Open(string(DriverSQLite), ":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = db.Close() })
+	ctx := context.Background()
+	if err := Migrate(ctx, db, DriverSQLite, fsys, "."); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	// Second run is a no-op.
+	if err := Migrate(ctx, db, DriverSQLite, fsys, "."); err != nil {
+		t.Fatalf("Migrate again: %v", err)
+	}
+	var versions string
+	rows, err := db.Query(`SELECT version FROM schema_migrations ORDER BY version`)
+	if err != nil {
+		t.Fatalf("versions: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		versions += v + ","
+	}
+	if versions != "001_init.sql,002_add.sql," {
+		t.Errorf("versions = %q, want both in order", versions)
+	}
+	// New column usable (proves 002 ran, not just recorded).
+	if _, err := db.Exec(`INSERT INTO t (id, v, w) VALUES ('a', 'b', 'c')`); err != nil {
+		t.Errorf("insert with new column: %v", err)
 	}
 }

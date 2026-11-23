@@ -444,3 +444,60 @@ func TestMigrate_Idempotent(t *testing.T) {
 		_ = s.Close()
 	}
 }
+
+func TestMigrate_PreRetryTable(t *testing.T) {
+	// Prod failure mode: a table created by the pre-retry schema has no
+	// attempts/next_retry_at columns AND no retry index. Opening it with
+	// the new code must add the columns BEFORE the schema's CREATE INDEX
+	// references them (pq 42703 otherwise), preserving existing rows.
+	dsn := filepath.Join(t.TempDir(), "outbox_preretry_test.db")
+	raw, err := NewConfig(Config{Driver: DriverSQLite, DSN: dsn})
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	s, ok := raw.(*outboxStore)
+	if !ok {
+		_ = raw.Close()
+		t.Fatal("store is not *outboxStore")
+	}
+	// Strip back to the pre-retry shape: no version table (the old code
+	// never created one), old table, legacy row.
+	if _, err := s.db.Exec(`DROP TABLE outbox`); err != nil {
+		_ = raw.Close()
+		t.Fatalf("drop: %v", err)
+	}
+	if _, err := s.db.Exec(`CREATE TABLE outbox (
+	    id TEXT PRIMARY KEY, feed_url TEXT NOT NULL, title TEXT NOT NULL,
+	    link TEXT NOT NULL, published_at TEXT NOT NULL DEFAULT '',
+	    webhook_url TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+	    error TEXT, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	    delivered_at DATETIME
+	)`); err != nil {
+		_ = raw.Close()
+		t.Fatalf("old schema: %v", err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO outbox (id, feed_url, title, link, webhook_url, status, created_at)
+		VALUES ('legacy-1', 'f', 't', 'l', 'w', 'pending', '2026-01-01T00:00:00Z')`); err != nil {
+		_ = raw.Close()
+		t.Fatalf("legacy insert: %v", err)
+	}
+	if _, err := s.db.Exec(`DROP TABLE schema_migrations`); err != nil {
+		_ = raw.Close()
+		t.Fatalf("drop versions: %v", err)
+	}
+	_ = raw.Close()
+
+	reopened, err := NewConfig(Config{Driver: DriverSQLite, DSN: dsn})
+	if err != nil {
+		t.Fatalf("NewConfig on pre-retry table: %v", err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	ctx := context.Background()
+	due, err := reopened.GetDueForRetry(ctx, time.Date(2026, 11, 22, 0, 0, 0, 0, time.UTC), 10)
+	if err != nil {
+		t.Fatalf("GetDueForRetry: %v", err)
+	}
+	if len(due) != 1 || due[0].ID != "legacy-1" || due[0].Attempts != 0 {
+		t.Fatalf("due = %+v, want legacy-1 at 0 attempts", due)
+	}
+}
