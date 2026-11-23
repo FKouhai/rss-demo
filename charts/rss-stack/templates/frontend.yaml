@@ -46,6 +46,8 @@ spec:
               value: {{ $svc.configUrl | default (include "rss-stack.svcUrl" (dict "root" $ "svc" "config")) | quote }}
             - name: CONFIG_ADMIN_GROUPS
               value: {{ $svc.adminGroups | default "admin" | quote }}
+            - name: MAX_IMPORT_FEEDS
+              value: {{ $svc.maxImportFeeds | default 500 | quote }}
             {{- $oidc := $svc.oidc }}
             {{- if $oidc.issuer }}
             {{- $redirect := $oidc.redirectUrl }}

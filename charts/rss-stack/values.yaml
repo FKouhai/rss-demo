@@ -144,6 +144,9 @@ services:
     # Must match rss_config's adminGroups: the frontend pre-checks,
     # config enforces. Align with the IdP group name (e.g. "admins").
     adminGroups: admin
+    # Cap for OPML bulk imports (MAX_IMPORT_FEEDS). Guards the poller
+    # from import floods; previews above it fail with a toast.
+    maxImportFeeds: 500
     # OIDC (Pocket-ID) login. Empty issuer = open mode (no login).
     # Secrets come from existing Secrets; the IdP itself is external.
     oidc:
