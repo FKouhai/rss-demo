@@ -19,6 +19,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -437,7 +438,8 @@ func collectNewItems(ctx context.Context, feeds []parsedFeed) []feedItem {
 }
 
 // pollCycle contains the core logic for a single polling cycle: parse,
-// dedupe, and publish each new item to feeds.new.
+// dedupe, and publish each new item to feeds.new. New feeds additionally
+// hydrate the read model via feeds.backfill (see handleFreshFeeds).
 func pollCycle(t time.Time) {
 	log.InfoFmt("Poller ticker: tick at %v", t)
 
@@ -476,65 +478,87 @@ func pollCycle(t time.Time) {
 		log.InfoFmt("primed poller with %d known items (nothing published)", n)
 		return
 	}
-	// New feeds get a taster, not a flood: up to maxItemsPerCycle of
-	// their newest items publish, the rest of the backlog is dropped
-	// (marked seen). Known feeds drain normally within the remaining
-	// budget, remainder staying unseen for later ticks.
-	if fresh := unknownFeeds(urls); len(fresh) > 0 {
-		freshSet := make(map[string]bool, len(fresh))
-		for _, u := range fresh {
-			freshSet[u] = true
-		}
-		var backlog, live []unseenItem
-		for _, c := range candidates {
-			if freshSet[c.item.FeedURL] {
-				backlog = append(backlog, c)
-			} else {
-				live = append(live, c)
-			}
-		}
-		taster := selectBatch(backlog, maxItemsPerCycle)
-		addCycle("taster", len(taster))
-		dropped := len(backlog) - len(taster)
-		if dropped > 0 {
-			// Mark only the unpublished tail as seen; the taster
-			// itself is marked via the normal published path below.
-			tasterKeys := make(map[string]bool, len(taster))
-			for _, t := range taster {
-				tasterKeys[t.key] = true
-			}
-			var dropKeys []string
-			for _, c := range backlog {
-				if !tasterKeys[c.key] {
-					dropKeys = append(dropKeys, c.key)
-				}
-			}
-			n := len(dropKeys)
-			markSeen(dropKeys...)
-			addCycle("dropped", n)
-			cycleSpan.SetAttributes(attribute.Int("dropped.new-feeds", n))
-			log.InfoFmt("dropped %d backlog items from %d new feeds (taster %d)", n, len(fresh), len(taster))
-		} else if len(taster) > 0 {
-			log.InfoFmt("taster %d items from %d new feeds", len(taster), len(fresh))
-		}
-		markKnown(fresh...)
-		// Taster joins the live batch; total still capped below.
-		candidates = append(taster, live...)
-	}
+
+	candidates = handleFreshFeeds(cycleSpan, nc, snapshot, urls, candidates)
 	batch := selectBatch(candidates, maxItemsPerCycle)
 	cycleSpan.SetAttributes(attribute.Int("published.items", len(batch)))
+
 	var published []string
 	for _, u := range batch {
 		published = append(published, u.key)
 	}
+
 	markSeen(published...)
 
-	for _, u := range batch {
+	publishItems(nc, snapshot, batch, pubsub.SubjectFeedsNew, "poller.PublishItem", "published")
+}
+
+// resolveFresh splits candidates into backlog/live for newly seen feeds.
+// Returns nil fresh when nothing is new, and the candidates untouched.
+func resolveFresh(urls []string, candidates []unseenItem) (fresh []string, backlog, live []unseenItem) {
+	fresh = unknownFeeds(urls)
+	if len(fresh) == 0 {
+		return nil, nil, candidates
+	}
+	freshSet := make(map[string]bool, len(fresh))
+	for _, u := range fresh {
+		freshSet[u] = true
+	}
+	for _, c := range candidates {
+		if freshSet[c.item.FeedURL] {
+			backlog = append(backlog, c)
+		} else {
+			live = append(live, c)
+		}
+	}
+	return fresh, backlog, live
+}
+
+// handleFreshFeeds gives new feeds a taster, not a flood: up to
+// maxItemsPerCycle of their newest items publish to feeds.new, the next
+// slice hydrates the read model via feeds.backfill (no notify), and the
+// rest is dropped (marked seen). Known feeds drain normally within the
+// remaining budget, remainder staying unseen for later ticks. Returns
+// the candidates with the taster merged into the live batch.
+func handleFreshFeeds(cycleSpan trace.Span, nc *pubsub.Client, snapshot ConfigStruct, urls []string, candidates []unseenItem) []unseenItem {
+	fresh, backlog, live := resolveFresh(urls, candidates)
+	if len(fresh) == 0 {
+		return candidates
+	}
+	taster, backfill, dropped := splitBacklog(backlog)
+	addCycle("taster", len(taster))
+	addCycle("backfilled", len(backfill))
+	addCycle("dropped", len(dropped))
+	cycleSpan.SetAttributes(
+		attribute.Int("taster.new-feeds", len(taster)),
+		attribute.Int("backfilled.new-feeds", len(backfill)),
+		attribute.Int("dropped.new-feeds", len(dropped)),
+	)
+	markKnown(fresh...)
+	// Backfill hydrates the read model without notifying: same
+	// row ID, different subject, so the aggregator persists it
+	// and the notify path never sees it.
+	var backfillKeys []string
+	for _, u := range backfill {
+		backfillKeys = append(backfillKeys, u.key)
+	}
+	markSeen(backfillKeys...)
+	publishItems(nc, snapshot, backfill, pubsub.SubjectFeedsBackfill, "poller.PublishBackfill", "backfilled")
+	log.InfoFmt("new feeds %d: taster %d, backfilled %d, dropped %d", len(fresh), len(taster), len(backfill), len(dropped))
+	// Taster joins the live batch; total still capped below.
+	return append(taster, live...)
+}
+
+// publishItems publishes each item to subject with a fresh root trace
+// per item: one item's journey stays one readable trace instead of all
+// landing in a single PollCycle monster with hundreds of spans.
+// okOutcome names successful publishes ("published", "backfilled");
+// failures always count "error".
+func publishItems(nc *pubsub.Client, snapshot ConfigStruct, items []unseenItem, subject, spanName, okOutcome string) {
+	for _, u := range items {
 		// Fresh root trace per item: the cycle span only counts, it
-		// doesn't parent. One item's journey stays one readable
-		// trace instead of all landing in a single PollCycle
-		// monster with hundreds of spans.
-		itemCtx, itemSpan := tracer.Start(context.Background(), "poller.PublishItem")
+		// doesn't parent.
+		itemCtx, itemSpan := tracer.Start(context.Background(), spanName)
 		itemSpan.SetAttributes(
 			attribute.String("feed.url", u.item.FeedURL),
 			attribute.String("item.link", u.item.Link),
@@ -554,14 +578,39 @@ func pollCycle(t time.Time) {
 				addCycle("error", 1)
 				return
 			}
-			if _, err := nc.Publish(itemCtx, pubsub.SubjectFeedsNew, payload, dm.MsgID()); err != nil {
+			if _, err := nc.Publish(itemCtx, subject, payload, dm.MsgID()); err != nil {
 				instrumentation.Fail(itemSpan, err, "failed to publish item %s: %v", u.item.Link, err)
 				addCycle("error", 1)
 				return
 			}
-			addCycle("published", 1)
+			addCycle(okOutcome, 1)
 		}()
 	}
+}
+
+const backfillDepthPerFeed = 25
+
+func splitBacklog(backlog []unseenItem) (taster, backfill, dropped []unseenItem) {
+	taster = selectBatch(backlog, maxItemsPerCycle)
+	taken := make(map[string]bool, len(taster))
+
+	for _, t := range taster {
+		taken[t.key] = true
+	}
+
+	perFeed := make(map[string]int)
+	for _, c := range backlog {
+		if taken[c.key] {
+			continue
+		}
+		if perFeed[c.item.FeedURL] < backfillDepthPerFeed {
+			backfill = append(backfill, c)
+			perFeed[c.item.FeedURL]++
+			continue
+		}
+		dropped = append(dropped, c)
+	}
+	return taster, backfill, dropped
 }
 
 // startPolling initializes and runs the background poller goroutine.

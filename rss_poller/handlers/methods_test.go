@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -584,5 +585,96 @@ func TestPollCycle_Metrics(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(cycleItems.WithLabelValues("published")); got != 0 {
 		t.Errorf("published = %v, want 0 (all publishes failed)", got)
+	}
+}
+
+// backlogItem builds an unseenItem with an RFC3339 date offset by days.
+// Lexicographic order == chronological (the invariant selectBatch needs).
+func backlogItem(key, feed string, day int) unseenItem {
+	return unseenItem{
+		key: key,
+		item: feedItem{
+			FeedURL:     feed,
+			Title:       key,
+			Link:        "https://example.com/" + key,
+			PublishedAt: time.Date(2026, 11, day, 12, 0, 0, 0, time.UTC).Format(time.RFC3339),
+		},
+	}
+}
+
+func keys(us []unseenItem) []string {
+	out := make([]string, 0, len(us))
+	for _, u := range us {
+		out = append(out, u.key)
+	}
+	return out
+}
+
+func TestSplitBacklog_Small(t *testing.T) {
+	// Everything fits the taster: backfill and dropped stay empty,
+	// newest first regardless of input order.
+	backlog := []unseenItem{
+		backlogItem("c", "https://example.com/a.rss", 3),
+		backlogItem("a", "https://example.com/a.rss", 1),
+		backlogItem("b", "https://example.com/a.rss", 2),
+	}
+	taster, backfill, dropped := splitBacklog(backlog)
+	if got := keys(taster); !reflect.DeepEqual(got, []string{"c", "b", "a"}) {
+		t.Errorf("taster = %v, want [c b a] newest-first", got)
+	}
+	if len(backfill) != 0 || len(dropped) != 0 {
+		t.Errorf("backfill=%d dropped=%d, want both empty", len(backfill), len(dropped))
+	}
+}
+
+func TestSplitBacklog_Wide(t *testing.T) {
+	// 8 items across 2 feeds: taster takes the 5 newest overall,
+	// backfill keeps the rest (within per-feed depth), nothing dropped.
+	var backlog []unseenItem
+	for i := 1; i <= 4; i++ {
+		backlog = append(backlog, backlogItem("a"+string(rune('0'+i)), "https://example.com/a.rss", i))
+		backlog = append(backlog, backlogItem("b"+string(rune('0'+i)), "https://example.com/b.rss", i+4))
+	}
+	taster, backfill, dropped := splitBacklog(backlog)
+	if len(taster) != maxItemsPerCycle {
+		t.Fatalf("taster = %d items, want %d", len(taster), maxItemsPerCycle)
+	}
+	if len(backfill) != 3 {
+		t.Errorf("backfill = %d items, want 3", len(backfill))
+	}
+	if len(dropped) != 0 {
+		t.Errorf("dropped = %d items, want empty", len(dropped))
+	}
+	// No item in two buckets.
+	seen := map[string]bool{}
+	for _, u := range append(append([]unseenItem{}, taster...), append(backfill, dropped...)...) {
+		if seen[u.key] {
+			t.Errorf("item %q in more than one bucket", u.key)
+		}
+		seen[u.key] = true
+	}
+	if len(seen) != 8 {
+		t.Errorf("buckets cover %d items, want all 8", len(seen))
+	}
+}
+
+func TestSplitBacklog_Deep(t *testing.T) {
+	// 40 items, one feed: taster 5, backfill capped at depth, rest dropped.
+	// Keys embed the day so they stay unique across months.
+	var backlog []unseenItem
+	for i := 1; i <= 40; i++ {
+		backlog = append(backlog, backlogItem(fmt.Sprintf("k%02d", i), "https://example.com/a.rss", i))
+	}
+	taster, backfill, dropped := splitBacklog(backlog)
+	if len(taster) != 5 || len(backfill) != backfillDepthPerFeed || len(dropped) != 40-5-backfillDepthPerFeed {
+		t.Fatalf("taster=%d backfill=%d dropped=%d, want 5/%d/%d",
+			len(taster), len(backfill), len(dropped), backfillDepthPerFeed, 40-5-backfillDepthPerFeed)
+	}
+	// Taster holds the 5 newest (days 40..36).
+	for i, u := range taster {
+		want := time.Date(2026, 11, 40-i, 0, 0, 0, 0, time.UTC).Format("2006-01-02")
+		if got := u.item.PublishedAt[:10]; got != want {
+			t.Errorf("taster[%d] = %s, want day %s", i, got, want)
+		}
 	}
 }
