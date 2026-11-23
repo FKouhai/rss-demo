@@ -21,7 +21,7 @@ func FeedsStreamConfig() jetstream.StreamConfig {
 	return jetstream.StreamConfig{
 		Name:        string(StreamFeeds),
 		Description: "Raw + enriched feed items",
-		Subjects:    []string{SubjectFeedsNew, SubjectFeedsEnriched},
+		Subjects:    []string{SubjectFeedsNew, SubjectFeedsEnriched, SubjectFeedsBackfill},
 		Retention:   jetstream.LimitsPolicy,
 		Discard:     jetstream.DiscardOld,
 		MaxAge:      24 * time.Hour,

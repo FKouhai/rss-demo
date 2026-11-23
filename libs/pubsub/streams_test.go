@@ -12,7 +12,7 @@ func TestFeedsStreamConfig_Baseline(t *testing.T) {
 	if cfg.Name != string(StreamFeeds) {
 		t.Errorf("Name = %q, want %q", cfg.Name, StreamFeeds)
 	}
-	wantSubjects := map[string]bool{SubjectFeedsNew: true, SubjectFeedsEnriched: true}
+	wantSubjects := map[string]bool{SubjectFeedsNew: true, SubjectFeedsEnriched: true, SubjectFeedsBackfill: true}
 	if len(cfg.Subjects) != len(wantSubjects) {
 		t.Fatalf("Subjects = %v, want %v", cfg.Subjects, wantSubjects)
 	}

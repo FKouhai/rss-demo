@@ -15,4 +15,6 @@ const (
 	SubjectAcksDelivered = SubjectPrefixAcks + "delivered"
 	// SubjectFeedsEnriched default subject for an enriched subject
 	SubjectFeedsEnriched = SubjectPrefixFeeds + "enriched"
+	// SubjectFeedsBackfill default subject for backfill feeds
+	SubjectFeedsBackfill = SubjectPrefixFeeds + "backfill"
 )
