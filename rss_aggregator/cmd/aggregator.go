@@ -88,6 +88,19 @@ func (a *Aggregator) Start(ctx context.Context) error {
 		return fmt.Errorf("consume feeds.new: %w", err)
 	}
 	a.consumeCtxs = append(a.consumeCtxs, items)
+
+	// Backfill hydrates the read model without notifying: the poller
+	// publishes new-feed history here, and only the aggregator listens.
+	// Same handler (content-hash dedup makes replays idempotent).
+	if _, err := a.nc.EnsureConsumer(ctx, string(pubsub.StreamFeeds),
+		pubsub.ConsumerFor("aggregator-backfill", string(pubsub.SubjectFeedsBackfill))); err != nil {
+		return fmt.Errorf("ensure aggregator-backfill consumer: %w", err)
+	}
+	backfill, err := a.nc.Consume(ctx, string(pubsub.StreamFeeds), "aggregator-backfill", a.handleFeed)
+	if err != nil {
+		return fmt.Errorf("consume feeds.backfill: %w", err)
+	}
+	a.consumeCtxs = append(a.consumeCtxs, backfill)
 	return nil
 }
 
