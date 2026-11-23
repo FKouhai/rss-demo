@@ -23,6 +23,7 @@ templ shell(p PageParams) {
 			<script src="/static/js/alpine.min.js" defer></script>
 		</head>
 		<body>
+			<div id="toasts" class="toasts" aria-live="polite"></div>
 			<div class="paper">
 				<header class="masthead">
 					<div class="dateline"><span id="dateline">{ dateline() }</span></div>
@@ -63,6 +64,61 @@ templ shell(p PageParams) {
 					has: function(id){ return this.list().indexOf(id) !== -1; },
 					mark: function(id){ var l = this.list(); if (l.indexOf(id) === -1) { l.push(id); try { localStorage.setItem(this.key, JSON.stringify(l.slice(-2000))); } catch(e){} } }
 				};
+				window.rssResetImportForm = function(){
+					var f = document.querySelector('form[hx-post="/config/import"]');
+					if(!f) return;
+					f.reset();
+					var lbl = f.querySelector('[data-filename]');
+					if(lbl) lbl.textContent = "No file chosen";
+				};
+				window.rssToast = function(msg, isErr){
+					var box = document.getElementById("toasts");
+					if(!box) return;
+					while(box.children.length >= 3){ box.removeChild(box.firstChild); }
+					var t = document.createElement("div");
+					t.className = "toast" + (isErr ? " error" : "");
+					t.textContent = msg;
+					box.appendChild(t);
+					setTimeout(function(){ t.remove(); }, isErr ? 8000 : 6000);
+				};
+				// OOB-inserted toasts can't rely on Alpine init, so arm
+				// their dismissal here: htmx fires this after every
+				// out-of-band swap.
+				document.body.addEventListener("htmx:oobAfterSwap", function(){
+					var box = document.getElementById("toasts");
+					if(!box) return;
+					var nodes = box.querySelectorAll("[data-autodismiss]:not([data-armed])");
+					for(var i = 0; i < nodes.length; i++){
+						(function(el){
+							el.setAttribute("data-armed", "1");
+							var ms = parseInt(el.getAttribute("data-autodismiss"), 10) || 6000;
+							setTimeout(function(){ el.remove(); }, ms);
+						})(nodes[i]);
+					}
+				});
+				document.body.addEventListener("htmx:responseError", function(e){
+					var msg = "Request failed";
+					try {
+						var xhr = e.detail.xhr;
+						msg = (xhr.responseText || ("Request failed (" + xhr.status + ")")).trim();
+					} catch(_){}
+					window.rssToast(msg, true);
+					var path = "";
+					try { path = e.detail.requestConfig.path; } catch(_){}
+					if(path === "/config/import"){
+						var p = document.getElementById("config-import-preview");
+						if(p) p.innerHTML = "";
+						window.rssResetImportForm();
+					}
+				});
+				// A completed preview consumes the selection: reset the
+				// file input so a stale filename doesn't linger.
+				document.body.addEventListener("htmx:afterRequest", function(e){
+					var ok = false, path = "";
+					try { ok = e.detail.successful; path = e.detail.requestConfig.path; } catch(_){}
+					if(!ok || path !== "/config/import") return;
+					window.rssResetImportForm();
+				});
 			</script>
 		</body>
 	</html>

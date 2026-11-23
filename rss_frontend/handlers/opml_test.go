@@ -48,13 +48,13 @@ func TestConfigImport_Preview(t *testing.T) {
 		t.Fatalf("code = %d, want 200: %s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"1 new", "1 already configured", "1 invalid", "https://new.example/feed.xml", "Import 1 feeds"} {
+	for _, want := range []string{"1 new", "1 already configured", "1 invalid", "https://new.example/feed.xml", "Import selected"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("preview missing %q", want)
 		}
 	}
-	if !strings.Contains(body, `name="url" value="https://new.example/feed.xml"`) {
-		t.Error("confirm form missing hidden url input")
+	if !strings.Contains(body, `type="checkbox" name="url" value="https://new.example/feed.xml"`) {
+		t.Error("confirm form missing checked checkbox input")
 	}
 }
 
@@ -81,6 +81,13 @@ func TestConfigImportConfirm_ForwardsNew(t *testing.T) {
 	for _, want := range []string{"https://new.example/feed.xml", "https://other.example/rss", "rss_feeds"} {
 		if !strings.Contains(hooks, want) {
 			t.Errorf("forwarded /hooks/update body missing %q: %s", want, hooks)
+		}
+	}
+	// Toast appends to #toasts; the stale preview clears itself.
+	body := rr.Body.String()
+	for _, want := range []string{`hx-swap-oob="beforeend:#toasts"`, "Imported 2 feeds", `class="toast ok"`, `data-autodismiss="6000"`, `id="config-import-preview" hx-swap-oob="true"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("confirm response missing %q", want)
 		}
 	}
 }

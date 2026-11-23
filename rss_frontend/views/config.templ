@@ -52,9 +52,11 @@ templ Config(p ConfigParams) {
 					<button class="btn" type="submit">Add</button>
 				</form>
 				<h3 class="subhead">Import OPML</h3>
-				<form class="formrow" hx-post="/config/import" hx-target="#config-import-preview" hx-swap="outerHTML" hx-encoding="multipart/form-data">
-					<input class="field" type="file" name="opml" accept=".opml,.xml,text/xml" required/>
-					<button class="btn" type="submit">Preview</button>
+				<form class="formrow" hx-post="/config/import" hx-target="#config-import-preview" hx-swap="outerHTML" hx-encoding="multipart/form-data" x-data="{ name: 'No file chosen' }">
+					<label class="btn" for="opml-file">Choose file</label>
+					<input id="opml-file" type="file" name="opml" accept=".opml,.xml,text/xml" required hidden x-on:change="name = $event.target.files.length ? $event.target.files[0].name : 'No file chosen'"/>
+					<span class="muted" x-text="name" data-filename>No file chosen</span>
+					<button class="btn" type="submit" hx-disabled-elt="this">Preview</button>
 				</form>
 				<div id="config-import-preview"></div>
 			}
@@ -109,20 +111,18 @@ templ ConfigImportPreview(p ImportPreview) {
 		if len(p.New) > 0 {
 			<form hx-post="/config/import/confirm" hx-target="#config-feeds" hx-swap="outerHTML">
 				<table class="ledger">
-					<thead><tr><th>Feed</th><th>Title</th></tr></thead>
+					<thead><tr><th></th><th>Feed</th><th>Title</th></tr></thead>
 					<tbody>
 						for _, f := range p.New {
 							<tr>
+								<td><input type="checkbox" name="url" value={ f.URL } checked/></td>
 								<td><code>{ f.URL }</code></td>
 								<td>{ f.Title }</td>
 							</tr>
 						}
 					</tbody>
 				</table>
-				for _, f := range p.New {
-					<input type="hidden" name="url" value={ f.URL }/>
-				}
-				<button class="btn" type="submit">Import { itoa(len(p.New)) } feeds</button>
+				<button class="btn" type="submit" hx-disabled-elt="this">Import selected</button>
 			</form>
 		}
 		if len(p.Existing) > 0 {
