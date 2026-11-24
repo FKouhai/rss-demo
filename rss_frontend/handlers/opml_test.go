@@ -83,9 +83,12 @@ func TestConfigImportConfirm_ForwardsNew(t *testing.T) {
 			t.Errorf("forwarded /hooks/update body missing %q: %s", want, hooks)
 		}
 	}
-	// Toast appends to #toasts; the stale preview clears itself.
+	// Toast appends to #toasts; the preview table is left alone by design.
 	body := rr.Body.String()
-	for _, want := range []string{`hx-swap-oob="beforeend:#toasts"`, "Imported 2 feeds", `class="toast ok"`, `data-autodismiss="6000"`, `id="config-import-preview" hx-swap-oob="true"`} {
+	if strings.Contains(body, "config-import-preview") {
+		t.Error("confirm must not touch the preview table")
+	}
+	for _, want := range []string{`hx-swap-oob="beforeend:#toasts"`, "Imported 2 feeds", `<div class="toast ok" data-autodismiss="6000">`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("confirm response missing %q", want)
 		}

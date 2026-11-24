@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/FKouhai/rss-demo/libs/auth"
+	"github.com/FKouhai/rss-demo/libs/instrumentation"
 	log "github.com/FKouhai/rss-demo/libs/logger"
 	"github.com/FKouhai/rss-frontend/views"
 )
@@ -213,6 +215,9 @@ func (d Deps) configAddHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d.renderConfigTable(w, r, r.Context())
+	if _, err := fmt.Fprintf(w, `<div hx-swap-oob="beforeend:#toasts"><div class="toast ok" data-autodismiss="6000">Added %s</div></div>`, feedURL); err != nil {
+		instrumentation.Fail(span, err, "add toast write: %v", err)
+	}
 }
 
 // configDeleteHandler proxies DELETE /feeds?url= (hx-delete per row).

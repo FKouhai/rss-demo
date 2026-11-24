@@ -42,8 +42,10 @@ templ Config(p ConfigParams) {
 					<p><code>{ p.DefaultWebhook }</code></p>
 				}
 			}
-			<h3 class="subhead">Feeds in config ({ itoa(len(p.ConfigFeeds)) })</h3>
-			@ConfigTable(p)
+			<details open>
+				<summary class="subhead">Feeds in config ({ itoa(len(p.ConfigFeeds)) })</summary>
+				@ConfigTable(p)
+			</details>
 			if p.IsAdmin {
 				<h3 class="subhead">Add feed</h3>
 				<form class="formrow" hx-post="/config/feeds" hx-target="#config-feeds" hx-swap="outerHTML">

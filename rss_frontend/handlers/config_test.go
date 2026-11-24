@@ -114,6 +114,11 @@ func TestConfig_AddProxies(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), "config-feeds") {
 		t.Error("want updated table fragment")
 	}
+	for _, want := range []string{`hx-swap-oob="beforeend:#toasts"`, `<div class="toast ok" data-autodismiss="6000">Added https://cfg.example/new.rss</div>`} {
+		if !strings.Contains(rr.Body.String(), want) {
+			t.Errorf("add response missing toast %q", want)
+		}
+	}
 }
 
 func TestConfig_DeleteProxies(t *testing.T) {

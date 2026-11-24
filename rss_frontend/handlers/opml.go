@@ -153,10 +153,11 @@ func (d Deps) configImportConfirmHandler(w http.ResponseWriter, r *http.Request)
 		zap.String("user", userLabel(r)),
 		zap.Int("feeds", len(urls)))
 	d.renderConfigTable(w, r, ctx)
-	// Out-of-band: toast the result where the eye is, and retire the
-	// now-stale preview table so a re-import starts from a clean slate.
-	// Unchecked boxes never submit, so urls is exactly what was imported.
-	if _, err := fmt.Fprintf(w, `<div class="toast ok" hx-swap-oob="beforeend:#toasts" data-autodismiss="6000">Imported %d feeds</div><div id="config-import-preview" hx-swap-oob="true"></div>`, len(urls)); err != nil {
+	// Out-of-band toast where the eye is. The styled div nests inside
+	// a plain OOB wrapper: htmx inserts the wrapper content, so the
+	// attributes that matter (class, data-autodismiss) must live on the
+	// inner element. The preview table stays put by design.
+	if _, err := fmt.Fprintf(w, `<div hx-swap-oob="beforeend:#toasts"><div class="toast ok" data-autodismiss="6000">Imported %d feeds</div></div>`, len(urls)); err != nil {
 		instrumentation.Fail(span, err, "confirm toast write: %v", err)
 	}
 }
