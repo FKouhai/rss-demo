@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"sort"
@@ -87,7 +89,14 @@ var inFlight atomic.Bool
 var (
 	knownFeedsMu sync.Mutex
 	knownFeeds   = make(map[string]bool)
+	fetchMu      sync.Mutex
+	validators   = make(map[string]feedValidators)
+	parkedUntil  = make(map[string]time.Time)
 )
+
+type feedValidators struct {
+	etag, lastMod string
+}
 
 // Metrics bundles the poller counters. All fields optional; nil entries
 // are skipped so tests can attach a subset or nothing at all.
@@ -281,15 +290,17 @@ func ParseRSS(ctx context.Context, feedURL []string) ([]parsedFeed, error) {
 		eg.Go(func() error {
 			feedCtx, cancel := context.WithTimeout(egCtx, 8*time.Second)
 			defer cancel()
-			// Keep the span ctx: the failure log below must carry
-			// trace_id so Loki `|= trace_id` finds it next to the
-			// "got feed" line (Debug never leaves the collector).
+
 			feedCtx, feedSpan := tracer.Start(feedCtx, "helper.ParseSingleFeed")
 			feedSpan.SetAttributes(attribute.String("feed.url", v))
+
 			defer feedSpan.End()
-			feedParser := gofeed.NewParser()
-			feedParser.Client = sharedHTTPClient
-			feed, err := feedParser.ParseURLWithContext(v, feedCtx)
+
+			feed, notModified, err := fetchFeed(feedCtx, v)
+			if notModified {
+				return nil
+			}
+
 			if err != nil {
 				span.AddEvent("FAILED_PROCESS_FEED")
 				feedSpan.RecordError(err)
@@ -612,6 +623,89 @@ func publishItems(nc *pubsub.Client, snapshot ConfigStruct, items []unseenItem, 
 }
 
 const backfillDepthPerFeed = 25
+
+// maxFeedBytes caps a single feed body: without it one pathological
+// response buffers unboundedly while the errgroup waits for it.
+const maxFeedBytes = 2 << 20 // 2MB
+
+// parkingDuration is the quarantine for failed feeds: any fetch
+// failure (timeout, DNS, refused, bad status, unparseable body) parks
+// the feed instead of refetching every tick. The observed failure mix
+// is persistent (dead URLs, blocked hosts), not transient blips, so a
+// uniform quarantine beats distinguishing failure kinds. Recovery costs
+// at most one window; success clears the park.
+const parkingDuration = 5 * time.Minute
+
+// fetchFeed fetches one feed with conditional headers and a parking
+// check. It returns (nil, true, nil) for parked skips and 304 Not
+// Modified alike: neither is new, neither is an error, both mean
+// "nothing to parse". Only genuine failures return an error (and park
+// the feed via the deferred recorder below).
+func fetchFeed(ctx context.Context, feedURL string) (feed *gofeed.Feed, notModified bool, err error) {
+	start := time.Now()
+	fetchMu.Lock()
+	until, parked := parkedUntil[feedURL]
+	v := validators[feedURL]
+	fetchMu.Unlock()
+	if parked && start.Before(until) {
+		addCycle("parked", 1)
+		return nil, true, nil
+	}
+	defer func() {
+		if err != nil {
+			fetchMu.Lock()
+			parkedUntil[feedURL] = time.Now().Add(parkingDuration)
+			fetchMu.Unlock()
+		}
+	}()
+
+	var req *http.Request
+	req, err = http.NewRequestWithContext(ctx, http.MethodGet, feedURL, nil)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if v.etag != "" {
+		req.Header.Set("If-None-Match", v.etag)
+	}
+
+	if v.lastMod != "" {
+		req.Header.Set("If-Modified-Since", v.lastMod)
+	}
+
+	var resp *http.Response
+	resp, err = sharedHTTPClient.Do(req)
+	if err != nil {
+		return nil, false, err
+	}
+
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNotModified {
+		addCycle("not-modified", 1)
+		return nil, true, nil
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		err = fmt.Errorf("unexpected status %d", resp.StatusCode)
+		return nil, false, err
+	}
+
+	feed, err = gofeed.NewParser().Parse(io.LimitReader(resp.Body, maxFeedBytes))
+	if err != nil {
+		return nil, false, err
+	}
+
+	fetchMu.Lock()
+	validators[feedURL] = feedValidators{
+		etag:    resp.Header.Get("Etag"),
+		lastMod: resp.Header.Get("Last-Modified"),
+	}
+	delete(parkedUntil, feedURL)
+	fetchMu.Unlock()
+
+	return feed, false, nil
+}
 
 func splitBacklog(backlog []unseenItem) (taster, backfill, dropped []unseenItem) {
 	taster = selectBatch(backlog, maxItemsPerCycle)

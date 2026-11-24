@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -755,5 +756,125 @@ func TestHandleFreshFeeds_MarksDroppedSeen(t *testing.T) {
 		if !seen[c.key] {
 			t.Errorf("key %s not marked seen (backfill/dropped must cover all non-taster)", c.key)
 		}
+	}
+}
+
+func resetFetchState(t *testing.T) {
+	t.Helper()
+	fetchMu.Lock()
+	oldV, oldP := validators, parkedUntil
+	validators = make(map[string]feedValidators)
+	parkedUntil = make(map[string]time.Time)
+	fetchMu.Unlock()
+	t.Cleanup(func() {
+		fetchMu.Lock()
+		validators, parkedUntil = oldV, oldP
+		fetchMu.Unlock()
+	})
+}
+
+func TestFetchFeed_ConditionalGet(t *testing.T) {
+	resetFetchState(t)
+	reg := metrics.Init("poller-test")
+	nmTotal := reg.Counter("cycle_items_total", "test cycle", "outcome")
+	SetMetrics(&Metrics{CycleItems: nmTotal})
+	defer SetMetrics(nil)
+	var mu sync.Mutex
+	hits := 0
+	var gotNoneMatch, gotModSince string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		hits++
+		gotNoneMatch, gotModSince = r.Header.Get("If-None-Match"), r.Header.Get("If-Modified-Since")
+		mu.Unlock()
+		if r.Header.Get("If-None-Match") == `"v1"` {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("ETag", `"v1"`)
+		w.Header().Set("Last-Modified", "Mon, 06 May 2024 12:30:00 GMT")
+		w.Header().Set("Content-Type", "application/rss+xml")
+		_, _ = w.Write([]byte(mockRSSFeedContent))
+	}))
+	defer srv.Close()
+
+	// First fetch: full body, validators recorded.
+	feed, notMod, err := fetchFeed(context.Background(), srv.URL)
+	if err != nil || notMod || feed == nil || len(feed.Items) != 2 {
+		t.Fatalf("first fetch = (%v, %v, %v), want feed with 2 items", feed, notMod, err)
+	}
+	// Second fetch: conditional headers sent, 304 back, nothing parsed.
+	feed, notMod, err = fetchFeed(context.Background(), srv.URL)
+	if err != nil || !notMod || feed != nil {
+		t.Fatalf("second fetch = (%v, %v, %v), want (nil, true, nil)", feed, notMod, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if hits != 2 {
+		t.Errorf("server hits = %d, want 2 (no extra fetch on 304)", hits)
+	}
+	if gotNoneMatch != `"v1"` || gotModSince != "Mon, 06 May 2024 12:30:00 GMT" {
+		t.Errorf("conditional headers = %q %q, want stored validators", gotNoneMatch, gotModSince)
+	}
+	if got := testutil.ToFloat64(nmTotal.WithLabelValues("not-modified")); got != 1 {
+		t.Errorf("not-modified = %v, want 1", got)
+	}
+}
+
+func TestFetchFeed_ParksTimeouts(t *testing.T) {
+	resetFetchState(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(500 * time.Millisecond)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, _, err := fetchFeed(ctx, srv.URL+"/slow"); err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+	fetchMu.Lock()
+	_, parked := parkedUntil[srv.URL+"/slow"]
+	fetchMu.Unlock()
+	if !parked {
+		t.Fatal("timed-out feed not parked")
+	}
+	// Parked feed short-circuits before any network I/O.
+	before := time.Now()
+	feed, notMod, err := fetchFeed(context.Background(), srv.URL+"/slow")
+	if err != nil || !notMod || feed != nil {
+		t.Fatalf("parked fetch = (%v, %v, %v), want (nil, true, nil)", feed, notMod, err)
+	}
+	if time.Since(before) > 100*time.Millisecond {
+		t.Error("parked fetch did network I/O instead of short-circuiting")
+	}
+}
+
+func TestFetchFeed_PersistentFailuresPark(t *testing.T) {
+	// Permanent fast failures park too: the observed mix is dead URLs
+	// and blocked hosts, not transient blips, and refetching them every
+	// 30s wastes work and buries signal. Recovery costs one window.
+	resetFetchState(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	if _, _, err := fetchFeed(context.Background(), srv.URL); err == nil {
+		t.Fatal("expected 500 error, got nil")
+	}
+	fetchMu.Lock()
+	_, parked := parkedUntil[srv.URL]
+	fetchMu.Unlock()
+	if !parked {
+		t.Error("persistent 500 should park the feed")
+	}
+	// Second call short-circuits without touching the network.
+	before := time.Now()
+	if _, notModified, err := fetchFeed(context.Background(), srv.URL); err != nil || !notModified {
+		t.Fatalf("parked fetch: err=%v notModified=%v, want (nil, true)", err, notModified)
+	}
+	if time.Since(before) > 100*time.Millisecond {
+		t.Error("parked fetch did network I/O instead of short-circuiting")
 	}
 }
