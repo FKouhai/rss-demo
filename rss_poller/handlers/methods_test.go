@@ -678,3 +678,82 @@ func TestSplitBacklog_Deep(t *testing.T) {
 		}
 	}
 }
+
+func TestPollCycle_SkipsOverlappingTick(t *testing.T) {
+	// The ticker fires every 30s regardless of cycle duration. With
+	// tens of feeds and slow origins a cycle overruns, and a second
+	// concurrent cycle would select an overlapping taster (each
+	// collects unseen before the other marks seen), silently
+	// multiplying the per-tick cap. The guard drops the late tick.
+	reg := metrics.Init("poller-test")
+	cycleItems := reg.Counter("cycle_items_total", "test cycle", "outcome")
+	SetMetrics(&Metrics{CycleItems: cycleItems, FetchErrors: reg.Counter("fetch_error_total", "test fetch")})
+	t.Cleanup(func() { SetMetrics(nil) })
+	inFlight.Store(true)
+	t.Cleanup(func() { inFlight.Store(false) })
+
+	before := testutil.ToFloat64(cycleItems.WithLabelValues("primed"))
+	pollCycle(time.Now())
+	after := testutil.ToFloat64(cycleItems.WithLabelValues("primed"))
+	if before != after {
+		t.Errorf("overlapping tick published primed=%v, want no change from %v", after, before)
+	}
+}
+
+func TestHandleFreshFeeds_MarksDroppedSeen(t *testing.T) {
+	// Regression: the dropped tail must be marked seen, or it
+	// resurfaces every tick as live backlog and the taster cap is
+	// defeated (observed live: 9 Real Python posts in 2 ticks).
+	knownFeedsMu.Lock()
+	oldKnown := knownFeeds
+	knownFeeds = make(map[string]bool)
+	knownFeedsMu.Unlock()
+	seenMu.Lock()
+	oldSeen := seen
+	seen = make(map[string]bool)
+	seenMu.Unlock()
+	t.Cleanup(func() {
+		knownFeedsMu.Lock()
+		knownFeeds = oldKnown
+		knownFeedsMu.Unlock()
+		seenMu.Lock()
+		seen = oldSeen
+		seenMu.Unlock()
+		SetMetrics(nil)
+	})
+	reg := metrics.Init("poller-test")
+	SetMetrics(&Metrics{CycleItems: reg.Counter("cycle_items_total", "test cycle", "outcome")})
+	_, span := tracer.Start(context.Background(), "test")
+	defer span.End()
+
+	var backlog []unseenItem
+	for i := 1; i <= 40; i++ {
+		backlog = append(backlog, backlogItem(fmt.Sprintf("drop%02d", i), "https://example.com/a.rss", i))
+	}
+	live := handleFreshFeeds(span, &pubsub.Client{}, ConfigStruct{}, []string{"https://example.com/a.rss"}, backlog)
+	if len(live) != maxItemsPerCycle {
+		t.Fatalf("live = %d items, want taster %d", len(live), maxItemsPerCycle)
+	}
+	// Taster keys stay unseen here: pollCycle marks them after the
+	// publish-batch select. Backfill + dropped must already be marked.
+	seenMu.Lock()
+	defer seenMu.Unlock()
+	for _, c := range backlog {
+		isTaster := false
+		for _, t := range live {
+			if t.key == c.key {
+				isTaster = true
+				break
+			}
+		}
+		if isTaster {
+			if seen[c.key] {
+				t.Errorf("taster key %s marked early; pollCycle owns that", c.key)
+			}
+			continue
+		}
+		if !seen[c.key] {
+			t.Errorf("key %s not marked seen (backfill/dropped must cover all non-taster)", c.key)
+		}
+	}
+}

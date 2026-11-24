@@ -71,6 +71,14 @@ const maxItemsPerCycle = 5
 // after the prime publish normally.
 var primed atomic.Bool
 
+// inFlight guards against overlapping cycles: with tens of feeds and
+// slow origins a cycle can outrun the 30s tick, and the ticker fires
+// regardless. Two concurrent cycles select overlapping tasters (each
+// collects unseen items before the other marks them seen), silently
+// multiplying the per-tick publish cap. Skipping the tick is correct:
+// the next tick picks up whatever is still unseen.
+var inFlight atomic.Bool
+
 // knownFeeds tracks feed URLs already primed. Feeds appearing mid-run
 // (added via config after boot) get the same treatment as the boot
 // prime: their backlog is marked seen, nothing published, so adding a
@@ -443,6 +451,12 @@ func collectNewItems(ctx context.Context, feeds []parsedFeed) []feedItem {
 func pollCycle(t time.Time) {
 	log.InfoFmt("Poller ticker: tick at %v", t)
 
+	if inFlight.Swap(true) {
+		log.Info("Poller ticker: previous cycle still running, skipping tick")
+		return
+	}
+	defer inFlight.Store(false)
+
 	cycleCtx, cycleSpan := tracer.Start(context.Background(), "poller.PollCycle")
 	// Always end the cycle span when this function returns so the span
 	// lifecycle is deterministic and never leaks.
@@ -543,6 +557,15 @@ func handleFreshFeeds(cycleSpan trace.Span, nc *pubsub.Client, snapshot ConfigSt
 		backfillKeys = append(backfillKeys, u.key)
 	}
 	markSeen(backfillKeys...)
+	// Dropped items must be marked too: they are terminal (never
+	// published, never backfilled), and leaving them unseen would
+	// resurface them every tick as live backlog — an endless drain
+	// that looks exactly like a flood.
+	var dropKeys []string
+	for _, u := range dropped {
+		dropKeys = append(dropKeys, u.key)
+	}
+	markSeen(dropKeys...)
 	publishItems(nc, snapshot, backfill, pubsub.SubjectFeedsBackfill, "poller.PublishBackfill", "backfilled")
 	log.InfoFmt("new feeds %d: taster %d, backfilled %d, dropped %d", len(fresh), len(taster), len(backfill), len(dropped))
 	// Taster joins the live batch; total still capped below.
